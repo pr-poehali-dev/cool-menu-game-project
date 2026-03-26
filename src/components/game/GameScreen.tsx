@@ -13,15 +13,18 @@ interface Props {
 }
 
 const W = 900, H = 520;
-const WORLD_W = 2000, WORLD_H = 1400;
-const CAMERA_LERP = 0.09;
+// Бой — небольшая комната внутри дома
+const WORLD_W = 1100, WORLD_H = 800;
+const CAMERA_LERP = 0.12;
 const ATTACK_RANGE = 56;
 const ATTACK_COOLDOWN_BASE = 28;
 const SPECIAL_COOLDOWN = 90;
-const PERSP = 0.72;
+// Зона входа (дверь) — игрок начинает здесь, здесь можно сбежать
+const FLEE_ZONE = { x: WORLD_W/2 - 40, y: WORLD_H - 60, w: 80, h: 60 };
 
+// Вид строго сверху — без перспективы
 function toScreen(wx: number, wy: number, camX: number, camY: number) {
-  return { sx: (wx - camX) + W / 2, sy: (wy - camY) * PERSP + H / 2 };
+  return { sx: (wx - camX) + W / 2, sy: (wy - camY) + H / 2 };
 }
 
 interface Vec2 { x: number; y: number; }
@@ -69,32 +72,28 @@ interface GameData {
 
 let enemyIdCounter = 0;
 
+// Препятствия внутри комнаты — алтари, колонны, мебель
 const createObstacles = (): Obstacle[] => {
   const obs: Obstacle[] = [];
   const rng = (a: number, b: number) => a + Math.random() * (b - a);
-  const clusters = [
-    {cx:350,cy:250},{cx:800,cy:180},{cx:550,cy:650},
-    {cx:1200,cy:350},{cx:950,cy:800},{cx:1550,cy:550},
-    {cx:400,cy:1000},{cx:1400,cy:950},{cx:1100,cy:1150},
-  ];
-  clusters.forEach(({cx,cy}) => {
-    for (let i=0;i<3+Math.floor(Math.random()*3);i++) {
-      const type: Obstacle["type"] = Math.random()<0.45?"building":Math.random()<0.5?"pillar":"ruin";
-      const w = type==="pillar"?28+rng(0,18):52+rng(0,55);
-      const h = type==="pillar"?28+rng(0,18):45+rng(0,45);
-      obs.push({ x:cx+rng(-100,100)-w/2, y:cy+rng(-100,100)-h/2, w, h,
-        wallH:type==="pillar"?55+rng(0,35):90+rng(0,110), type });
-    }
+  // Колонны по углам
+  [[120,100],[WORLD_W-160,100],[120,WORLD_H-180],[WORLD_W-160,WORLD_H-180]].forEach(([cx,cy])=>{
+    obs.push({ x:cx-18, y:cy-18, w:36, h:36, wallH:60, type:"pillar" });
   });
-  for (let i=0;i<10;i++) obs.push({ x:rng(80,WORLD_W-80), y:rng(80,WORLD_H-80), w:22+rng(0,14), h:22+rng(0,14), wallH:45+rng(0,45), type:"pillar" });
+  // Случайные объекты по центру
+  for (let i=0;i<4;i++) {
+    obs.push({ x:rng(200,WORLD_W-250), y:rng(120,WORLD_H-250), w:rng(35,70), h:rng(30,55), wallH:rng(40,80), type:"ruin" });
+  }
   return obs;
 };
 
+// Враги внутри комнаты — меньше, но плотнее
 const spawnEnemies = (): Enemy[] => {
   const positions = [
-    {x:480,y:280},{x:750,y:580},{x:1050,y:200},{x:1200,y:750},
-    {x:580,y:950},{x:1450,y:380},{x:1700,y:820},{x:850,y:1100},
-    {x:1350,y:1200},{x:280,y:1200},{x:1850,y:650},{x:1800,y:1300},
+    {x:200,y:150},{x:550,y:120},{x:900,y:160},
+    {x:180,y:380},{x:550,y:350},{x:920,y:400},
+    {x:300,y:580},{x:750,y:560},
+    {x:500,y:220},{x:700,y:450},{x:350,y:450},{x:650,y:250},
   ];
   return positions.map((p,i) => {
     const isSpecial = i%4===3;
@@ -116,75 +115,114 @@ const circleRect = (cx:number,cy:number,r:number,rx:number,ry:number,rw:number,r
   return (cx-nx)**2+(cy-ny)**2<r*r;
 };
 
-// ── Пол ──────────────────────────────────────────────────────────────────────
-const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, tick: number) => {
-  ctx.fillStyle="#07060f"; ctx.fillRect(0,0,W,H);
-  const ts=72;
-  const wx0=Math.floor((camX-W/2)/ts)*ts;
-  const wy0=Math.floor((camY*PERSP-H/2)/(ts*PERSP))*ts;
-  for (let wx=wx0;wx<camX+W;wx+=ts) {
-    for (let wy=wy0;wy<camY+(H/PERSP);wy+=ts) {
-      const tl=toScreen(wx,wy,camX,camY);
-      const br=toScreen(wx+ts,wy+ts,camX,camY);
-      if (br.sx<-4||tl.sx>W+4||br.sy<-4||tl.sy>H+4) continue;
-      const xi=Math.floor(wx/ts), yi=Math.floor(wy/ts);
-      ctx.fillStyle=(xi+yi)%2===0?"#09080f":"#0c0b16";
-      ctx.fillRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
-      ctx.strokeStyle="rgba(67,56,202,0.05)"; ctx.lineWidth=1;
-      ctx.strokeRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
+// ── Комната (интерьер) ────────────────────────────────────────────────────────
+const drawRoom = (ctx: CanvasRenderingContext2D, camX: number, camY: number, tick: number) => {
+  // Фон за комнатой
+  ctx.fillStyle = "#0a0008"; ctx.fillRect(0,0,W,H);
+
+  const tl = toScreen(0, 0, camX, camY);
+  const br = toScreen(WORLD_W, WORLD_H, camX, camY);
+  const roomW = br.sx - tl.sx;
+  const roomH = br.sy - tl.sy;
+
+  // Пол — деревянные доски (горизонтальные полосы)
+  ctx.fillStyle = "#1a1008"; ctx.fillRect(tl.sx, tl.sy, roomW, roomH);
+  const boardH = 28;
+  for (let by = 0; by < WORLD_H; by += boardH) {
+    const bs = toScreen(0, by, camX, camY);
+    const be = toScreen(WORLD_W, by, camX, camY);
+    if (bs.sy < -4 || bs.sy > H+4) continue;
+    const shade = (Math.floor(by/boardH)%2===0) ? "#1e1408" : "#180f06";
+    ctx.fillStyle = shade;
+    const beh = Math.min(boardH, toScreen(0,by+boardH,camX,camY).sy - bs.sy);
+    ctx.fillRect(tl.sx, bs.sy, roomW, beh);
+    // Линия доски
+    ctx.strokeStyle = "rgba(80,50,20,0.35)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(bs.sx, bs.sy); ctx.lineTo(be.sx, be.sy); ctx.stroke();
+    // Прожилки дерева
+    if (Math.floor(by/boardH)%3===0) {
+      ctx.strokeStyle = "rgba(60,35,10,0.15)"; ctx.lineWidth = 0.5;
+      const mid = toScreen(WORLD_W*0.3, by+boardH/2, camX, camY);
+      const mid2 = toScreen(WORLD_W*0.7, by+boardH/2, camX, camY);
+      ctx.beginPath(); ctx.moveTo(bs.sx, bs.sy+beh*0.5); ctx.lineTo(mid.sx, mid.sy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mid.sx, mid.sy); ctx.lineTo(mid2.sx, mid2.sy); ctx.stroke();
     }
   }
-  const circles=[{wx:700,wy:450,r:100},{wx:1300,wy:700,r:80},{wx:450,wy:1050,r:90}];
-  circles.forEach(({wx,wy,r})=>{
-    const c=toScreen(wx,wy,camX,camY);
-    const pulse=0.08+0.05*Math.sin(tick*0.03);
-    ctx.beginPath(); ctx.ellipse(c.sx,c.sy,r,r*PERSP,0,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(139,92,246,${pulse})`; ctx.lineWidth=2; ctx.stroke();
-    for (let i=0;i<5;i++) {
-      const a1=(i/5)*Math.PI*2+tick*0.004, a2=((i+2)/5)*Math.PI*2+tick*0.004;
+
+  // Стены (толстые)
+  const wallThick = 22;
+  ctx.fillStyle = "#120820";
+  // Верхняя стена
+  ctx.fillRect(tl.sx - wallThick, tl.sy - wallThick, roomW + wallThick*2, wallThick);
+  // Боковые
+  ctx.fillRect(tl.sx - wallThick, tl.sy - wallThick, wallThick, roomH + wallThick*2);
+  ctx.fillRect(br.sx, tl.sy - wallThick, wallThick, roomH + wallThick*2);
+  // Нижняя (с дверным проёмом)
+  const doorSx = toScreen(FLEE_ZONE.x, WORLD_H, camX, camY);
+  const doorEx = toScreen(FLEE_ZONE.x + FLEE_ZONE.w, WORLD_H, camX, camY);
+  ctx.fillRect(tl.sx - wallThick, br.sy, doorSx.sx - tl.sx + wallThick, wallThick);
+  ctx.fillRect(doorEx.sx, br.sy, br.sx - doorEx.sx + wallThick, wallThick);
+
+  // Рамки стен
+  ctx.strokeStyle = "#2d1b50"; ctx.lineWidth = 2;
+  ctx.strokeRect(tl.sx, tl.sy, roomW, roomH);
+
+  // Окна на боковых стенах
+  [[0.25, 0.2], [0.25, 0.6], [0.75, 0.2], [0.75, 0.6]].forEach(([fx, fy]) => {
+    const wx = toScreen(fx < 0.5 ? 0 : WORLD_W, fy * WORLD_H, camX, camY);
+    const pulse = 0.4 + 0.15*Math.sin(tick*0.04 + fx*10);
+    ctx.fillStyle = `rgba(109,40,217,${pulse*0.3})`;
+    ctx.fillRect(wx.sx + (fx < 0.5 ? -wallThick : 0), wx.sy - 15, wallThick, 30);
+    ctx.strokeStyle = `rgba(139,92,246,${pulse})`; ctx.lineWidth = 1;
+    ctx.strokeRect(wx.sx + (fx < 0.5 ? -wallThick : 0), wx.sy - 15, wallThick, 30);
+  });
+
+  // Дверь — выход (снизу по центру)
+  const dSx = toScreen(FLEE_ZONE.x, WORLD_H - 10, camX, camY);
+  ctx.fillStyle = "#2d1040";
+  ctx.fillRect(dSx.sx, dSx.sy - 20, doorEx.sx - dSx.sx, 30);
+  ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = 1.5;
+  ctx.strokeRect(dSx.sx, dSx.sy - 20, doorEx.sx - dSx.sx, 30);
+  ctx.fillStyle = "#a855f7"; ctx.font = "9px monospace"; ctx.textAlign = "center";
+  ctx.fillText("ВЫХОД", dSx.sx + (doorEx.sx - dSx.sx)/2, dSx.sy - 5);
+  ctx.textAlign = "left";
+
+  // CE-знаки на полу (проклятые символы)
+  [[0.3, 0.4], [0.7, 0.6], [0.5, 0.25], [0.2, 0.7], [0.8, 0.3]].forEach(([fx, fy], i) => {
+    const sc = toScreen(fx * WORLD_W, fy * WORLD_H, camX, camY);
+    if (sc.sx < 0 || sc.sx > W || sc.sy < 0 || sc.sy > H) return;
+    const pulse2 = 0.06 + 0.04*Math.sin(tick*0.05 + i*1.3);
+    ctx.strokeStyle = `rgba(109,40,217,${pulse2})`; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(sc.sx, sc.sy, 25, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sc.sx, sc.sy, 12, 0, Math.PI*2); ctx.stroke();
+    for (let k=0;k<6;k++) {
+      const a = (k/6)*Math.PI*2 + tick*0.003;
       ctx.beginPath();
-      ctx.moveTo(c.sx+Math.cos(a1)*r*0.75,c.sy+Math.sin(a1)*r*PERSP*0.75);
-      ctx.lineTo(c.sx+Math.cos(a2)*r*0.75,c.sy+Math.sin(a2)*r*PERSP*0.75);
-      ctx.strokeStyle=`rgba(124,58,237,${pulse*0.5})`; ctx.lineWidth=1; ctx.stroke();
+      ctx.moveTo(sc.sx + Math.cos(a)*12, sc.sy + Math.sin(a)*12);
+      ctx.lineTo(sc.sx + Math.cos(a)*25, sc.sy + Math.sin(a)*25);
+      ctx.stroke();
     }
   });
 };
 
-// ── Препятствие ──────────────────────────────────────────────────────────────
+// ── Препятствие — вид сверху ──────────────────────────────────────────────────
 const drawObstacle = (ctx: CanvasRenderingContext2D, obs: Obstacle, camX: number, camY: number) => {
   const tl=toScreen(obs.x,obs.y,camX,camY);
-  const tr=toScreen(obs.x+obs.w,obs.y,camX,camY);
   const br=toScreen(obs.x+obs.w,obs.y+obs.h,camX,camY);
-  const bl=toScreen(obs.x,obs.y+obs.h,camX,camY);
-  if (tr.sx<-20||bl.sx>W+20||tl.sy>H+obs.wallH||br.sy<-obs.wallH) return;
-  const wH=obs.wallH;
-  if (obs.type==="building") {
-    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(br.sx,br.sy); ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
-    ctx.fillStyle="#0c111e"; ctx.fill(); ctx.strokeStyle="#1e2a40"; ctx.lineWidth=1; ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(br.sx,br.sy); ctx.lineTo(tr.sx,tr.sy); ctx.lineTo(tr.sx,tr.sy-wH); ctx.lineTo(br.sx,br.sy-wH); ctx.closePath();
-    ctx.fillStyle="#0a0e1a"; ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(tl.sx,tl.sy-wH); ctx.lineTo(tr.sx,tr.sy-wH); ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
-    ctx.fillStyle="#1a2035"; ctx.fill(); ctx.strokeStyle="#2d3a56"; ctx.stroke();
-    const numWin=Math.max(1,Math.floor(wH/30));
-    ctx.fillStyle="rgba(251,191,36,0.4)";
-    for (let row=0;row<numWin;row++) {
-      const wy2=bl.sy-wH*0.85+row*(wH/(numWin+1));
-      const span=br.sx-bl.sx;
-      ctx.fillRect(bl.sx+span*0.2,wy2,8,10);
-      ctx.fillRect(bl.sx+span*0.6,wy2,8,10);
-    }
-  } else if (obs.type==="pillar") {
-    const cx=(tl.sx+br.sx)/2, cy=(tl.sy+br.sy)/2;
-    const rx=Math.abs(tr.sx-tl.sx)/2+2;
-    ctx.beginPath(); ctx.moveTo(cx-rx,cy); ctx.lineTo(cx-rx,cy-wH); ctx.arc(cx,cy-wH,rx,Math.PI,0); ctx.lineTo(cx+rx,cy);
-    ctx.fillStyle="#1c1c2e"; ctx.fill(); ctx.strokeStyle="#4a4a6a"; ctx.lineWidth=1; ctx.stroke();
-    const ry=(br.sy-tl.sy)/2*PERSP+2;
-    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2); ctx.fillStyle="#252535"; ctx.fill(); ctx.stroke();
+  if (br.sx<-10||tl.sx>W+10||br.sy<-10||tl.sy>H+10) return;
+  const rw = br.sx-tl.sx, rh = br.sy-tl.sy;
+  if (obs.type==="pillar") {
+    ctx.fillStyle="#1c1c2e"; ctx.fillRect(tl.sx,tl.sy,rw,rh);
+    ctx.strokeStyle="#4a4a6a"; ctx.lineWidth=1.5; ctx.strokeRect(tl.sx,tl.sy,rw,rh);
+    // Каменный узор сверху
+    ctx.fillStyle="#252535"; ctx.fillRect(tl.sx+3,tl.sy+3,rw-6,rh-6);
+    ctx.strokeStyle="#3a3a5a"; ctx.lineWidth=0.5; ctx.strokeRect(tl.sx+3,tl.sy+3,rw-6,rh-6);
   } else {
-    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(bl.sx,bl.sy-wH*0.7); ctx.lineTo(br.sx,br.sy-wH*0.5); ctx.lineTo(br.sx,br.sy); ctx.closePath();
-    ctx.fillStyle="#18181a"; ctx.fill(); ctx.strokeStyle="#2d2d35"; ctx.lineWidth=1; ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy-wH*0.7); ctx.lineTo(br.sx,br.sy-wH*0.5); ctx.lineTo(tr.sx,tr.sy-wH*0.4); ctx.lineTo(tl.sx,tl.sy-wH*0.6); ctx.closePath();
-    ctx.fillStyle="#1e1e22"; ctx.fill();
+    // Алтарь / обломки
+    ctx.fillStyle="#18181a"; ctx.fillRect(tl.sx,tl.sy,rw,rh);
+    ctx.strokeStyle="#4c1d95"; ctx.lineWidth=1; ctx.strokeRect(tl.sx,tl.sy,rw,rh);
+    ctx.fillStyle="rgba(109,40,217,0.12)";
+    ctx.fillRect(tl.sx+2,tl.sy+2,rw-4,rh-4);
   }
 };
 
@@ -203,17 +241,7 @@ const drawPlayer = (
   ctx.translate(Math.round(sx), Math.round(sy));
   ctx.imageSmoothingEnabled = false;
 
-  // CE-аура — только лёгкий ореол, без большого кольца
-  const cePct = p.ce / p.maxCe;
-  if (cePct > 0.15) {
-    const grad = ctx.createRadialGradient(0,-18,4,0,-18,22);
-    grad.addColorStop(0, `${energyColor}00`);
-    grad.addColorStop(0.6, `${energyColor}${Math.floor(cePct*20).toString(16).padStart(2,"0")}`);
-    grad.addColorStop(1, `${energyColor}00`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(-22,-40,44,44);
-  }
-  // Заряд max
+  // Заряд max (только при удержании)
   if (p.chargeTimer>30) {
     const cp = Math.min(1,(p.chargeTimer-30)/60);
     ctx.beginPath(); ctx.arc(0,-18,24,-Math.PI/2,-Math.PI/2+Math.PI*2*cp);
@@ -224,10 +252,6 @@ const drawPlayer = (
   if (p.healCooldown > 0 && p.healCooldown > 450) {
     // только показываем что недавно исцелились
   }
-
-  // Тень
-  ctx.beginPath(); ctx.ellipse(0, 2, 9, 4, 0, 0, Math.PI*2);
-  ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fill();
 
   const legL_dy = isMoving ? (walkFrame<2?-2:2) : 0;
   const legR_dy = isMoving ? (walkFrame<2?2:-2) : 0;
@@ -541,12 +565,7 @@ const drawHUD = (
     ctx.fillText("ГОТОВ",bx+5,by+38);
   }
 
-  // ── Побег ──
-  ctx.fillStyle="rgba(0,0,0,0.65)"; ctx.fillRect(W-70,H-28,66,22);
-  ctx.strokeStyle="rgba(107,114,128,0.4)"; ctx.lineWidth=1; ctx.strokeRect(W-70,H-28,66,22);
-  ctx.fillStyle="#374151"; ctx.font="8px monospace"; ctx.textAlign="center";
-  ctx.fillText("[Esc] Бежать",W-37,H-13);
-  ctx.textAlign="left";
+  // (Подсказка побега показывается прямо на карте у двери, не в HUD)
 };
 
 // ─── Компонент ───────────────────────────────────────────────────────────────
@@ -598,8 +617,9 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
 
   const initGame = useCallback(() => {
     const emod=energyDef.statMods;
+    // Игрок стартует у входа (нижний центр комнаты)
     const player: Player = {
-      x:120,y:120,vx:0,vy:0,
+      x:WORLD_W/2, y:WORLD_H-50, vx:0,vy:0,
       hp:Math.floor(8*emod.defense+(progress.level-1)*2),
       maxHp:Math.floor(8*emod.defense+(progress.level-1)*2),
       attackTimer:0,invincible:0,
@@ -618,7 +638,7 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
     gameRef.current={
       player,enemies:spawnEnemies(),obstacles:createObstacles(),
       particles:[],floatTexts:[],
-      camX:120,camY:120,
+      camX:WORLD_W/2, camY:WORLD_H/2,
       keys:new Set(),tick:0,running:true,won:false,
     };
   }, [energyDef.statMods, progress]);
@@ -659,8 +679,10 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
       g.tick++;
       const { player:p, enemies, obstacles, keys }=g;
 
-      // ── Побег ──
-      if (keys.has(b.flee||"Escape")) {
+      // ── Побег — только у входа (зона двери) ──
+      const inFleeZone = p.x >= FLEE_ZONE.x && p.x <= FLEE_ZONE.x+FLEE_ZONE.w
+        && p.y >= FLEE_ZONE.y && p.y <= WORLD_H;
+      if (inFleeZone && (keys.has(b.flee||"Escape")||keys.has("Escape"))) {
         g.running=false;
         progressRef.current.level=p.level;
         progressRef.current.xp=p.xp;
@@ -873,7 +895,9 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
       g.particles=g.particles.filter(pt=>{ pt.x+=pt.vx; pt.y+=pt.vy; pt.vx*=0.88; pt.vy*=0.88; return --pt.life>0; });
       g.floatTexts=g.floatTexts.filter(ft=>{ ft.y+=ft.vy; return --ft.life>0; });
       g.camX+=(p.x-g.camX)*CAMERA_LERP; g.camY+=(p.y-g.camY)*CAMERA_LERP;
-      g.camX=Math.max(0,Math.min(WORLD_W,g.camX)); g.camY=Math.max(0,Math.min(WORLD_H,g.camY));
+      // Камера ограничена — комната небольшая, показываем всю сразу если помещается
+      g.camX=Math.max(W/2,Math.min(WORLD_W-W/2,g.camX));
+      g.camY=Math.max(H/2,Math.min(WORLD_H-H/2,g.camY));
 
       // Победа
       const aliveCount=enemies.filter(e=>e.alive).length;
@@ -887,8 +911,16 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
       }
 
       // ── Рендер ──
-      drawFloor(ctx,g.camX,g.camY,g.tick);
+      drawRoom(ctx,g.camX,g.camY,g.tick);
       g.particles.forEach(pt=>drawParticle(ctx,pt,g.camX,g.camY));
+
+      // Показываем подсказку у двери
+      if (inFleeZone) {
+        const ds=toScreen(p.x, p.y-40, g.camX, g.camY);
+        ctx.fillStyle="rgba(168,85,247,0.85)"; ctx.fillRect(ds.sx-48,ds.sy-16,96,16);
+        ctx.fillStyle="#fff"; ctx.font="bold 10px monospace"; ctx.textAlign="center";
+        ctx.fillText("[Esc] Сбежать",ds.sx,ds.sy-3); ctx.textAlign="left";
+      }
 
       const dl: {y:number;draw:()=>void}[]=[];
       g.obstacles.forEach(o=>dl.push({y:o.y+o.h,draw:()=>drawObstacle(ctx,o,g.camX,g.camY)}));

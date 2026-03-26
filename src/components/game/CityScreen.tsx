@@ -11,10 +11,9 @@ interface Props {
 // Мировые размеры
 const W = 900, H = 520;
 const WORLD_W = 1800, WORLD_H = 1400;
-const PERSP = 0.68;
-
+// Вид строго сверху — без перспективного сжатия
 function toScreen(wx: number, wy: number, camX: number, camY: number) {
-  return { sx: (wx - camX) + W / 2, sy: (wy - camY) * PERSP + H / 2 };
+  return { sx: (wx - camX) + W / 2, sy: (wy - camY) + H / 2 };
 }
 
 // ── Типы тайлов пола ─────────────────────────────────────────────────────────
@@ -202,19 +201,7 @@ const NPCS: NPC[] = [
   },
 ];
 
-// ── Деревья и декор ──────────────────────────────────────────────────────────
-const TREES = [
-  {x:160,y:160},{x:260,y:180},{x:160,y:560},{x:260,y:560},
-  {x:500,y:160},{x:560,y:180},{x:500,y:560},
-  {x:920,y:160},{x:980,y:180},{x:920,y:560},
-  {x:1200,y:160},{x:1260,y:180},
-  {x:1430,y:560},{x:1490,y:580},
-  {x:100,y:900},{x:180,y:920},{x:100,y:1150},{x:180,y:1170},
-  {x:500,y:900},{x:560,y:920},{x:500,y:1150},
-  {x:920,y:900},{x:1000,y:920},
-  {x:1200,y:900},{x:1300,y:920},{x:1200,y:1150},
-  {x:1500,y:900},{x:1580,y:920},
-];
+// ── Декор ─────────────────────────────────────────────────────────────────────
 
 const BENCHES = [
   {x:200,y:580},{x:450,y:580},{x:650,y:580},{x:900,y:580},
@@ -233,10 +220,10 @@ const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, ti
 
   const ts = TILE_SIZE;
   const wx0 = Math.floor((camX - W/2) / ts) * ts;
-  const wy0 = Math.floor((camY - H/(2*PERSP)) / ts) * ts;
+  const wy0 = Math.floor((camY - H/2) / ts) * ts;
 
   for (let wx=wx0; wx<camX+W/2+ts; wx+=ts) {
-    for (let wy=wy0; wy<camY+H/(2*PERSP)+ts; wy+=ts) {
+    for (let wy=wy0; wy<camY+H/2+ts; wy+=ts) {
       const tl = toScreen(wx, wy, camX, camY);
       const br = toScreen(wx+ts, wy+ts, camX, camY);
       if (br.sx<-2||tl.sx>W+2||br.sy<-2||tl.sy>H+10) continue;
@@ -304,28 +291,11 @@ const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, ti
   LIGHTS.forEach(({x,y})=>{
     const { sx, sy } = toScreen(x, y, camX, camY);
     const pulse = 0.05+0.03*Math.sin(tick*0.05+x*0.01);
-    ctx.beginPath(); ctx.ellipse(sx, sy+10, 20, 8, 0, 0, Math.PI*2);
+    ctx.beginPath(); ctx.arc(sx, sy, 14, 0, Math.PI*2);
     ctx.fillStyle=`rgba(255,200,80,${pulse})`; ctx.fill();
   });
 };
 
-const drawTree = (ctx: CanvasRenderingContext2D, x: number, y: number, camX: number, camY: number, tick: number) => {
-  const { sx, sy } = toScreen(x, y, camX, camY);
-  if (sx<-40||sx>W+40||sy<-80||sy>H+20) return;
-  // Тень
-  ctx.beginPath(); ctx.ellipse(sx, sy+4, 16, 6, 0, 0, Math.PI*2);
-  ctx.fillStyle="rgba(0,0,0,0.2)"; ctx.fill();
-  // Ствол
-  ctx.fillStyle="#6b4226";
-  ctx.fillRect(Math.round(sx-3), Math.round(sy-22), 6, 22);
-  // Крона — 3 эллипса для объёма
-  ctx.fillStyle=`rgba(34,120,50,${0.8+0.1*Math.sin(tick*0.025+x*0.01)})`;
-  ctx.beginPath(); ctx.ellipse(sx, sy-30, 16, 14, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle="rgba(28,100,42,0.9)";
-  ctx.beginPath(); ctx.ellipse(sx-6, sy-34, 11, 10, 0, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle="rgba(40,140,58,0.85)";
-  ctx.beginPath(); ctx.ellipse(sx+4, sy-33, 10, 9, 0, 0, Math.PI*2); ctx.fill();
-};
 
 const drawBench = (ctx: CanvasRenderingContext2D, x: number, y: number, camX: number, camY: number) => {
   const { sx, sy } = toScreen(x, y, camX, camY);
@@ -445,10 +415,6 @@ const drawNPC = (
     ctx.fillText("[E] говорить",0,-96); ctx.textAlign="left";
   }
 
-  // Тень
-  ctx.beginPath(); ctx.ellipse(0,2,12,4,0,0,Math.PI*2);
-  ctx.fillStyle="rgba(0,0,0,0.25)"; ctx.fill();
-
   const sway = Math.sin(tick*0.04+npc.x*0.01)*1.5;
 
   // Ноги
@@ -506,14 +472,6 @@ const drawPlayer = (ctx: CanvasRenderingContext2D, px: number, py: number, camX:
 
   ctx.save(); ctx.translate(Math.round(sx), Math.round(sy));
   ctx.imageSmoothingEnabled = false;
-
-  // CE-аура
-  ctx.beginPath(); ctx.arc(0,-18,20+Math.sin(tick*0.07)*1.5,0,Math.PI*2);
-  ctx.strokeStyle=`${energyColor}44`; ctx.lineWidth=1.5; ctx.stroke();
-
-  // Тень
-  ctx.beginPath(); ctx.ellipse(0,2,10,4,0,0,Math.PI*2);
-  ctx.fillStyle="rgba(0,0,0,0.3)"; ctx.fill();
 
   // Ноги
   const legL_dy = isMoving?(walkFrame<2?-2:2):0;
@@ -597,13 +555,19 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
   const SPEED = energyDef.statMods.speed * 2.5;
 
   const openDialog = (npc: NPC) => {
-    const d: DialogState = { npc, lineIdx: 0, dialogIdx: 0 };
+    const cur = progressRef.current;
+    const isQuestDone = cur.activeQuest === npc.questName
+      && cur.questProgress >= cur.questGoal && cur.questGoal > 0;
+    // Если квест выполнен — начать с последнего диалога (сдача)
+    const dialogIdx = isQuestDone ? npc.dialogue.length - 1 : 0;
+    const d: DialogState = { npc, lineIdx: 0, dialogIdx };
     setDialog(d); dialogRef.current = d;
   };
 
   const advanceDialog = () => {
     setDialog(prev => {
       if (!prev) return null;
+      const cur = progressRef.current;
       const lines = prev.npc.dialogue[prev.dialogIdx];
       if (prev.lineIdx < lines.length-1) {
         const next = {...prev, lineIdx: prev.lineIdx+1};
@@ -613,13 +577,12 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
         const next = {...prev, dialogIdx: prev.dialogIdx+1, lineIdx:0};
         dialogRef.current = next; return next;
       }
-      // Принятие квеста
-      const newProg: CharacterProgress = {
-        ...progressRef.current,
-        activeQuest: prev.npc.questName,
-        questProgress: 0,
-        questGoal: prev.npc.questGoal,
-      };
+      // Конец диалога — принятие или сдача квеста
+      const isQuestDone = cur.activeQuest === prev.npc.questName
+        && cur.questProgress >= cur.questGoal && cur.questGoal > 0;
+      const newProg: CharacterProgress = isQuestDone
+        ? { ...cur, activeQuest: null, questProgress: 0, questGoal: 0 }  // сдача квеста
+        : { ...cur, activeQuest: prev.npc.questName, questProgress: 0, questGoal: prev.npc.questGoal }; // принятие
       onQuestUpdate(newProg);
       dialogRef.current = null; return null;
     });
@@ -708,13 +671,12 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
       // Рендер
       drawFloor(ctx,s.camX,s.camY,s.tick);
 
-      // Декор — деревья, скамейки, фонари (до зданий и персонажей)
+      // Декор — скамейки, фонари (без деревьев)
       BENCHES.forEach(b2=>drawBench(ctx,b2.x,b2.y,s.camX,s.camY));
       LIGHTS.forEach(l=>drawLamp(ctx,l.x,l.y,s.camX,s.camY,s.tick));
 
-      // Depth sort
+      // Depth sort — здания, НПС, игрок (без деревьев)
       const dl: {y:number;draw:()=>void}[]=[];
-      TREES.forEach(t=>dl.push({y:t.y+20,draw:()=>drawTree(ctx,t.x,t.y,s.camX,s.camY,s.tick)}));
       BUILDINGS.forEach(b2=>dl.push({y:b2.y+b2.h,draw:()=>drawBuilding(ctx,b2,s.camX,s.camY,s.tick)}));
       NPCS.forEach(npc=>dl.push({y:npc.y,draw:()=>drawNPC(ctx,npc,s.camX,s.camY,s.tick,s.nearNpc?.id===npc.id)}));
       dl.push({y:s.py,draw:()=>drawPlayer(ctx,s.px,s.py,s.camX,s.camY,s.tick,s.facing,Math.abs(s.vx)>0.1||Math.abs(s.vy)>0.1,s.walkCycle,energyDef.color)});
@@ -809,7 +771,17 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
               padding:"7px 18px",background:dialog.npc.color,color:"#fff",
               border:"none",borderRadius:5,fontFamily:"'Georgia',serif",fontSize:13,cursor:"pointer",
             }}>
-              {dialog.lineIdx<dialog.npc.dialogue[dialog.dialogIdx].length-1?"Далее →":dialog.dialogIdx<dialog.npc.dialogue.length-1?"Принять квест ✦":"Понятно"}
+              {(() => {
+                const cur = progressRef.current;
+                const isLastLine = dialog.lineIdx >= dialog.npc.dialogue[dialog.dialogIdx].length-1;
+                const isLastDialog = dialog.dialogIdx >= dialog.npc.dialogue.length-1;
+                const isQuestDone = cur.activeQuest === dialog.npc.questName
+                  && cur.questProgress >= cur.questGoal && cur.questGoal > 0;
+                if (!isLastLine) return "Далее →";
+                if (!isLastDialog) return "Далее →";
+                if (isQuestDone) return "✓ Сдать квест";
+                return "Принять квест ✦";
+              })()}
             </button>
           </div>
         </div>
