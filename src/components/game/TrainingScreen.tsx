@@ -50,12 +50,12 @@ const DIALOGS: Record<TrainingPhase, string[]> = {
 // ─── Canvas drawing helpers ────────────────────────────────────────────────
 
 const W = 900, H = 520;
-const ISO_X = 0.7, ISO_Y = 0.35;
+const PERSP = 0.72;
 
 function toScreen(wx: number, wy: number, camX: number, camY: number) {
   return {
-    sx: (wx - wy) * ISO_X - (camX - camY) * ISO_X + W / 2,
-    sy: (wx + wy) * ISO_Y - (camX + camY) * ISO_Y + H / 3,
+    sx: (wx - camX) + W / 2,
+    sy: (wy - camY) * PERSP + H / 2,
   };
 }
 
@@ -270,38 +270,32 @@ const TrainingScreen = ({ energy, onComplete }: Props) => {
       ctx.fillStyle = "#07060f";
       ctx.fillRect(0, 0, W, H);
 
-      // Floor tiles
+      // Floor tiles — прямоугольники (top-down + PERSP)
       const tileSize = 80;
-      const startX = Math.floor((s.camX - 300) / tileSize) * tileSize;
-      const startY = Math.floor((s.camY - 300) / tileSize) * tileSize;
-      for (let wx = startX; wx < s.camX + 300; wx += tileSize) {
-        for (let wy = startY; wy < s.camY + 300; wy += tileSize) {
+      const startX = Math.floor((s.camX - W/2) / tileSize) * tileSize;
+      const startY = Math.floor((s.camY - H/2/PERSP) / tileSize) * tileSize;
+      for (let wx = startX; wx < s.camX + W/2 + tileSize; wx += tileSize) {
+        for (let wy = startY; wy < s.camY + H/2/PERSP + tileSize; wy += tileSize) {
           const tl = toScreen(wx, wy, s.camX, s.camY);
-          const tr = toScreen(wx+tileSize, wy, s.camX, s.camY);
           const br = toScreen(wx+tileSize, wy+tileSize, s.camX, s.camY);
-          const bl = toScreen(wx, wy+tileSize, s.camX, s.camY);
-          ctx.beginPath();
-          ctx.moveTo(tl.sx,tl.sy); ctx.lineTo(tr.sx,tr.sy);
-          ctx.lineTo(br.sx,br.sy); ctx.lineTo(bl.sx,bl.sy);
-          ctx.closePath();
+          if (br.sx < -4 || tl.sx > W+4 || br.sy < -4 || tl.sy > H+4) continue;
           const xi = Math.floor(wx/tileSize), yi = Math.floor(wy/tileSize);
           ctx.fillStyle = (xi+yi)%2===0 ? "#09080f" : "#0c0b16";
-          ctx.fill();
+          ctx.fillRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
           ctx.strokeStyle = "rgba(67,56,202,0.07)";
-          ctx.lineWidth = 1; ctx.stroke();
+          ctx.lineWidth = 1;
+          ctx.strokeRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
         }
       }
 
-      // Training boundary walls
-      const corners = [
-        toScreen(60,60,s.camX,s.camY), toScreen(560,60,s.camX,s.camY),
-        toScreen(560,560,s.camX,s.camY), toScreen(60,560,s.camX,s.camY),
-      ];
-      ctx.beginPath();
-      corners.forEach((c,i) => i===0 ? ctx.moveTo(c.sx,c.sy) : ctx.lineTo(c.sx,c.sy));
-      ctx.closePath();
-      ctx.strokeStyle = `rgba(${energyDef.color.slice(1).match(/../g)!.map(h=>parseInt(h,16)).join(",")},0.2)`;
-      ctx.lineWidth = 2; ctx.stroke();
+      // Training boundary
+      {
+        const tl = toScreen(60,60,s.camX,s.camY);
+        const br = toScreen(560,560,s.camX,s.camY);
+        ctx.strokeStyle = `rgba(${energyDef.color.slice(1).match(/../g)!.map(h=>parseInt(h,16)).join(",")},0.2)`;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
+      }
 
       // Goal points (move phase)
       if (ph === "move") {

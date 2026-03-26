@@ -2,16 +2,17 @@ import { useState } from "react";
 import MenuScreen from "@/components/game/MenuScreen";
 import EnergySelect from "@/components/game/EnergySelect";
 import TrainingScreen from "@/components/game/TrainingScreen";
+import CityScreen from "@/components/game/CityScreen";
 import GameScreen from "@/components/game/GameScreen";
 import InfoModal from "@/components/game/InfoModal";
 import { EnergyType, CharacterProgress, getEnergyDef, createProgress } from "@/components/game/gameState";
 
-type Screen = "menu" | "energy-select" | "training" | "game" | "gameover";
+type Screen = "menu" | "energy-select" | "training" | "city" | "game" | "gameover";
 
 const Index = () => {
   const [screen, setScreen] = useState<Screen>("menu");
   const [showInfo, setShowInfo] = useState(false);
-  const [energy, setEnergy] = useState<EnergyType>("piercing");
+  const [energy, setEnergy] = useState<EnergyType>("infinity");
   const [progress, setProgress] = useState<CharacterProgress | null>(null);
   const [finalProgress, setFinalProgress] = useState<CharacterProgress | null>(null);
 
@@ -20,10 +21,20 @@ const Index = () => {
   const handleEnergySelect = (e: EnergyType) => {
     setEnergy(e);
     setProgress(createProgress(e));
+    setScreen("city"); // сначала — в город
+  };
+
+  const handleGoToTraining = (prog: CharacterProgress) => {
+    setProgress(prog);
     setScreen("training");
   };
 
   const handleTrainingComplete = (prog: CharacterProgress) => {
+    setProgress(prog);
+    setScreen("city"); // после тренировки — обратно в город
+  };
+
+  const handleGoToBattle = (prog: CharacterProgress) => {
     setProgress(prog);
     setScreen("game");
   };
@@ -34,8 +45,12 @@ const Index = () => {
   };
 
   const handleRestart = () => {
-    setProgress(createProgress(energy));
-    setScreen("training");
+    if (progress) setScreen("city");
+    else {
+      const p = createProgress(energy);
+      setProgress(p);
+      setScreen("city");
+    }
   };
 
   const handleMenu = () => setScreen("menu");
@@ -46,6 +61,14 @@ const Index = () => {
     <div style={{ position: "fixed", inset: 0, background: "#030208", overflow: "hidden" }}>
       {screen === "menu" && <MenuScreen onPlay={handlePlay} onInfo={() => setShowInfo(true)} />}
       {screen === "energy-select" && <EnergySelect onSelect={handleEnergySelect} />}
+      {screen === "city" && progress && (
+        <CityScreen
+          energy={energy}
+          progress={progress}
+          onGoToBattle={handleGoToBattle}
+          onGoToTraining={handleGoToTraining}
+        />
+      )}
       {screen === "training" && progress && (
         <TrainingScreen energy={energy} onComplete={handleTrainingComplete} />
       )}
@@ -115,7 +138,7 @@ const Index = () => {
                 border: `2px solid ${energyDef.color}`, padding: "12px 32px", cursor: "pointer",
                 borderRadius: 4, boxShadow: `0 0 20px ${energyDef.color}33`,
               }}>
-                ▶ СНОВА В БОЙ
+                ▶ ВЕРНУТЬСЯ В ГОРОД
               </button>
               <button onClick={handleMenu} style={{
                 fontFamily: "'Georgia', serif", fontSize: 14, letterSpacing: "0.2em",

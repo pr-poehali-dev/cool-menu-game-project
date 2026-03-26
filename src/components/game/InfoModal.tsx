@@ -118,6 +118,7 @@ const InfoModal = ({ onClose }: Props) => {
                       <div style={{ color: e.color, fontSize: 14, fontWeight: 700, marginBottom: 3 }}>
                         {e.nameRu} <span style={{ color: "#4c3a7a", fontSize: 11 }}>({e.name})</span>
                       </div>
+                      <div style={{ color: "#60a5fa", fontSize: 10, marginBottom: 3 }}>вдохновение: {e.inspiration}</div>
                       <div style={{ color: "#8b7aa8", fontSize: 11, lineHeight: 1.5, marginBottom: 6 }}>{e.description}</div>
                       <div style={{ fontSize: 11, color: "#4ade80", marginBottom: 2 }}>✦ {e.passive}</div>
                       <div style={{ fontSize: 11, color: "#f87171" }}>⚠ {e.limitation}</div>
