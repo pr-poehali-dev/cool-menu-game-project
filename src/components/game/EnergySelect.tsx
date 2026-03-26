@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { ENERGIES, EnergyType, EnergyDef } from "./gameState";
 
 interface Props {
@@ -13,31 +13,19 @@ function hexToRgb(hex: string): string {
 }
 
 const EnergySelect = ({ onSelect }: Props) => {
-  // hover храним в ref — не вызываем rerender при onMouseMove
   const [selected, setSelected] = useState<EnergyType | null>(null);
-  const [activeEnergy, setActiveEnergy] = useState<EnergyDef | null>(null);
+  const [hovered, setHovered] = useState<EnergyDef | null>(null);
   const [page, setPage] = useState(0);
-  const hoverRef = useRef<EnergyType | null>(null);
 
   const perPage = 6;
   const pages = Math.ceil(ENERGIES.length / perPage);
   const visible = ENERGIES.slice(page * perPage, page * perPage + perPage);
 
+  // Что показываем в сайдбаре: hover > selected > пусто
+  const sidebarEnergy = hovered ?? (selected ? ENERGIES.find(e => e.id === selected) ?? null : null);
+
   const handleConfirm = () => {
     if (selected) onSelect(selected);
-  };
-
-  const handleEnter = (e: EnergyDef) => {
-    hoverRef.current = e.id;
-    setActiveEnergy(e);
-  };
-  const handleLeave = () => {
-    hoverRef.current = null;
-    setActiveEnergy(selected ? ENERGIES.find(e => e.id === selected) ?? null : null);
-  };
-  const handleClick = (e: EnergyDef) => {
-    setSelected(e.id);
-    setActiveEnergy(e);
   };
 
   return (
@@ -71,43 +59,48 @@ const EnergySelect = ({ onSelect }: Props) => {
         Выбери свою врождённую энергию
       </h1>
       <p style={{ color: "#4c3a7a", fontSize: 12, letterSpacing: "0.1em", margin: "0 0 18px" }}>
-        Это определит твой стиль боя навсегда
+        Это определит твою склонность к техникам
       </p>
 
-      {/* Основной контент — фиксированная высота, без смещений */}
       <div style={{ display: "flex", gap: 20, width: "min(940px,96vw)", alignItems: "flex-start" }}>
-        {/* Сетка карточек — фиксированная минимальная высота */}
+        {/* Сетка карточек */}
         <div style={{ flex: "1 1 auto" }}>
+          {/* Сетка — фиксированная высота строк (карточки НЕ меняют размер при hover) */}
           <div style={{
             display: "grid",
             gridTemplateColumns: "repeat(3, 1fr)",
             gap: 8,
-            minHeight: 260,
           }}>
             {visible.map(e => {
               const isSelected = selected === e.id;
+              const isHov = hovered?.id === e.id;
               return (
                 <button
                   key={e.id}
-                  onClick={() => handleClick(e)}
-                  onMouseEnter={() => handleEnter(e)}
-                  onMouseLeave={handleLeave}
+                  onClick={() => setSelected(e.id)}
+                  onMouseEnter={() => setHovered(e)}
+                  onMouseLeave={() => setHovered(null)}
                   style={{
                     background: isSelected
-                      ? `linear-gradient(135deg, rgba(${hexToRgb(e.color)},0.18), rgba(${hexToRgb(e.glowColor)},0.08))`
-                      : "rgba(10,8,24,0.85)",
-                    border: isSelected ? `2px solid ${e.color}` : `1px solid rgba(109,40,217,0.25)`,
+                      ? `linear-gradient(135deg, rgba(${hexToRgb(e.color)},0.2), rgba(${hexToRgb(e.glowColor)},0.08))`
+                      : isHov
+                        ? `rgba(${hexToRgb(e.color)},0.08)`
+                        : "rgba(10,8,24,0.85)",
+                    border: isSelected ? `2px solid ${e.color}` : isHov ? `1px solid ${e.color}66` : `1px solid rgba(109,40,217,0.25)`,
                     borderRadius: 8,
                     padding: "13px 11px",
                     cursor: "pointer",
                     textAlign: "left",
-                    // НЕТ transform/translateY — это и было причиной скачков
-                    transition: "background 0.15s, border-color 0.15s, box-shadow 0.15s",
+                    // Фиксированная высота — НЕТ контента, меняющего размер при hover
+                    height: 78,
+                    boxSizing: "border-box",
+                    overflow: "hidden",
+                    transition: "background 0.12s, border-color 0.12s, box-shadow 0.12s",
                     boxShadow: isSelected ? `0 0 18px ${e.glowColor}44` : "none",
                     userSelect: "none",
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
                     <span style={{
                       fontSize: 22, color: e.color, lineHeight: 1,
                       textShadow: isSelected ? `0 0 12px ${e.glowColor}` : "none",
@@ -117,11 +110,9 @@ const EnergySelect = ({ onSelect }: Props) => {
                       <div style={{ color: e.color, fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", lineHeight: 1.2 }}>
                         {e.nameRu}
                       </div>
-                      <div style={{ color: "#4c3a7a", fontSize: 10, letterSpacing: "0.06em" }}>
-                        {e.inspiration}
-                      </div>
                     </div>
                   </div>
+                  {/* Только статы — не меняют высоту карточки */}
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                     {(["damage","speed","defense"] as const).map(s => {
                       const val = e.statMods[s];
@@ -181,79 +172,65 @@ const EnergySelect = ({ onSelect }: Props) => {
           </div>
         </div>
 
-        {/* Панель деталей — фиксированные размеры, без прыжков */}
+        {/* Сайдбар — фиксированный, НЕ влияет на карточки */}
         <div style={{
           width: 220, flexShrink: 0,
           background: "rgba(10,8,24,0.92)",
-          border: `1px solid ${activeEnergy ? activeEnergy.color + "55" : "rgba(109,40,217,0.2)"}`,
+          border: `1px solid ${sidebarEnergy ? sidebarEnergy.color + "55" : "rgba(109,40,217,0.2)"}`,
           borderRadius: 10, padding: 16,
-          minHeight: 340,
+          minHeight: 320,
           transition: "border-color 0.2s, box-shadow 0.2s",
-          boxShadow: activeEnergy ? `0 0 28px ${activeEnergy.glowColor}18` : "none",
+          boxShadow: sidebarEnergy ? `0 0 28px ${sidebarEnergy.glowColor}18` : "none",
         }}>
-          {activeEnergy ? (
+          {sidebarEnergy ? (
             <>
               <div style={{
                 fontSize: 42, textAlign: "center", marginBottom: 7,
-                color: activeEnergy.color,
-                textShadow: `0 0 18px ${activeEnergy.glowColor}`,
+                color: sidebarEnergy.color,
+                textShadow: `0 0 18px ${sidebarEnergy.glowColor}`,
                 lineHeight: 1,
-              }}>{activeEnergy.kanji}</div>
-              <div style={{ color: activeEnergy.color, fontSize: 16, fontWeight: 700, marginBottom: 2 }}>
-                {activeEnergy.nameRu}
+              }}>{sidebarEnergy.kanji}</div>
+              <div style={{ color: sidebarEnergy.color, fontSize: 15, fontWeight: 700, textAlign: "center", marginBottom: 4 }}>
+                {sidebarEnergy.nameRu}
               </div>
-              <div style={{ color: "#60a5fa", fontSize: 10, marginBottom: 2, letterSpacing: "0.05em" }}>
-                {activeEnergy.inspiration}
+              <div style={{ color: "#4c3a7a", fontSize: 10, textAlign: "center", marginBottom: 10, letterSpacing: "0.05em" }}>
+                {sidebarEnergy.name}
               </div>
-              <div style={{ color: "#4c3a7a", fontSize: 10, marginBottom: 10, letterSpacing: "0.04em" }}>
-                {activeEnergy.name}
+              <div style={{ color: "#6b7280", fontSize: 11, lineHeight: 1.6, marginBottom: 10 }}>
+                {sidebarEnergy.description}
               </div>
-              <div style={{ color: "#8b7aa8", fontSize: 11, lineHeight: 1.55, marginBottom: 10 }}>
-                {activeEnergy.description}
+              {/* Склонность */}
+              <div style={{
+                background: `${sidebarEnergy.color}0f`,
+                border: `1px solid ${sidebarEnergy.color}22`,
+                borderRadius: 5, padding: "7px 9px", marginBottom: 10,
+                color: sidebarEnergy.color, fontSize: 10, lineHeight: 1.5,
+              }}>
+                ✦ {sidebarEnergy.affinityDesc}
               </div>
-
-              <div style={{ marginBottom: 8 }}>
-                <div style={{ color: "#4ade80", fontSize: 9, letterSpacing: "0.12em", marginBottom: 3 }}>
-                  ✦ ПАССИВНЫЙ ЭФФЕКТ
-                </div>
-                <div style={{ color: "#86efac", fontSize: 10, lineHeight: 1.5 }}>
-                  {activeEnergy.passive}
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ color: "#f87171", fontSize: 9, letterSpacing: "0.12em", marginBottom: 3 }}>
-                  ⚠ ОГРАНИЧЕНИЕ
-                </div>
-                <div style={{ color: "#fca5a5", fontSize: 10, lineHeight: 1.5 }}>
-                  {activeEnergy.limitation}
-                </div>
-              </div>
-
-              {/* Бары характеристик */}
-              {(["damage","speed","defense","energyRegen"] as const).map(stat => {
-                const val = activeEnergy.statMods[stat];
-                const labels: Record<string, string> = { damage:"Урон", speed:"Скорость", defense:"Защита", energyRegen:"Реген CE" };
-                const pct = Math.min(100, (val / 2) * 100);
-                const color = val >= 1.2 ? "#4ade80" : val <= 0.85 ? "#f87171" : "#94a3b8";
+              {/* Статы */}
+              {(["damage","speed","defense","energyRegen"] as const).map(s => {
+                const val = sidebarEnergy.statMods[s];
+                const labels = { damage:"Урон", speed:"Скорость", defense:"Защита", energyRegen:"Регенерация CE" };
+                const c = val >= 1.2 ? "#4ade80" : val <= 0.85 ? "#f87171" : "#94a3b8";
                 return (
-                  <div key={stat} style={{ marginBottom: 5 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                      <span style={{ color: "#4c3a7a", fontSize: 9, letterSpacing: "0.06em" }}>{labels[stat]}</span>
-                      <span style={{ color, fontSize: 9 }}>
-                        {val >= 1 ? "+" : ""}{Math.round((val - 1) * 100)}%
-                      </span>
-                    </div>
-                    <div style={{ height: 3, background: "rgba(255,255,255,0.07)", borderRadius: 2 }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 2, transition: "width 0.25s" }} />
-                    </div>
+                  <div key={s} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, fontSize: 11 }}>
+                    <span style={{ color: "#4c3a7a" }}>{labels[s]}</span>
+                    <span style={{ color: c, fontWeight: 700 }}>
+                      {val >= 1 ? "+" : ""}{Math.round((val - 1) * 100)}%
+                    </span>
                   </div>
                 );
               })}
             </>
           ) : (
-            <div style={{ color: "#2d2148", fontSize: 12, textAlign: "center", marginTop: 60, lineHeight: 1.8 }}>
-              Наведи на энергию<br />чтобы узнать подробности
+            <div style={{
+              height: "100%", display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              color: "#2d1f4a", fontSize: 12, textAlign: "center", lineHeight: 1.8,
+            }}>
+              <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.4 }}>⊙</div>
+              Наведи на энергию<br/>чтобы увидеть<br/>подробности
             </div>
           )}
         </div>

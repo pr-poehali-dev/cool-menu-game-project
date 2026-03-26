@@ -569,11 +569,11 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
   const energyDef = getEnergyDef(energy);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({
-    px: 450, py: 500,
+    px: 900, py: 350,
     vx: 0, vy: 0,
     walkCycle: 0,
     facing: { x: 1, y: 0 },
-    camX: 450, camY: 500,
+    camX: 900, camY: 350,
     keys: new Set<string>(),
     tick: 0,
     nearNpc: null as NPC | null,
@@ -626,10 +626,10 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
       const s = stateRef.current;
       if (down) {
         s.keys.add(e.code);
-        if (e.code===b.interact||e.code===b.technique) {
+        if (e.code===b.interact||e.code==="KeyF"||e.code===b.technique) {
           if (!dialogRef.current && s.nearNpc) openDialog(s.nearNpc);
           else if (dialogRef.current) advanceDialog();
-          else if (s.nearCursed) onGoToBattle({...progress});
+          else if (!dialogRef.current && s.nearCursed) onGoToBattle({...progress});
         }
       } else {
         s.keys.delete(e.code);
@@ -705,15 +705,19 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
       }
 
       // HUD
-      ctx.fillStyle="rgba(255,255,255,0.88)";
-      ctx.fillRect(12,12,200,52);
-      ctx.strokeStyle="rgba(0,0,0,0.1)"; ctx.lineWidth=1; ctx.strokeRect(12,12,200,52);
+      const eq = progress.equippedTechniques;
+      const activeTechName = eq && eq.length > 0
+        ? (eq[Math.min(progress.activeSlot ?? 0, eq.length-1)] ?? "Проклятый удар")
+        : "Проклятый удар";
+      ctx.fillStyle="rgba(10,8,24,0.88)";
+      ctx.fillRect(12,12,210,52);
+      ctx.strokeStyle=energyDef.color+"44"; ctx.lineWidth=1; ctx.strokeRect(12,12,210,52);
       ctx.fillStyle=energyDef.color; ctx.font="bold 12px monospace";
       ctx.fillText(`${energyDef.kanji}  ${energyDef.nameRu}`,20,30);
-      ctx.fillStyle="#374151"; ctx.font="10px monospace";
+      ctx.fillStyle="#c4b5fd"; ctx.font="10px monospace";
       ctx.fillText(`Ур.${progress.level}  XP: ${progress.xp}/${progress.xpToNext}`,20,46);
-      ctx.fillStyle="#6b7280"; ctx.font="9px monospace";
-      ctx.fillText(`[${energyDef.inspiration}]`,20,58);
+      ctx.fillStyle="#6d28d9"; ctx.font="9px monospace";
+      ctx.fillText(`[E]: ${activeTechName.slice(0,20)}`,20,58);
 
       animRef.current=requestAnimationFrame(loop);
     };

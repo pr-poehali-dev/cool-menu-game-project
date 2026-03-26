@@ -189,14 +189,18 @@ const Index = () => {
   };
 
   const handleVictory = (prog: CharacterProgress) => {
-    // Обновляем прогресс квеста
     const updated: CharacterProgress = {
       ...prog,
-      questProgress: prog.activeQuest ? (prog.questGoal) : 0,
+      questProgress: prog.activeQuest ? prog.questGoal : 0,
     };
     setFinalProgress(updated);
     setProgress(updated);
     setScreen("victory");
+  };
+
+  const handleFlee = (prog: CharacterProgress) => {
+    setProgress(prog);
+    setScreen("city");
   };
 
   const handleReturnToCity = () => {
@@ -227,6 +231,7 @@ const Index = () => {
           progress={progress}
           onGameOver={handleGameOver}
           onVictory={handleVictory}
+          onFlee={handleFlee}
         />
       )}
       {screen==="victory" && finalProgress && (
@@ -246,8 +251,8 @@ const Index = () => {
         />
       )}
 
-      {/* Квест-плашка — видна в городе и в бою */}
-      {progress && (screen==="city"||screen==="game") && (
+      {/* Квест-плашка — только в городе (в бою квест рисуется на канвасе) */}
+      {progress && screen==="city" && (
         <QuestHUD progress={progress} />
       )}
 
