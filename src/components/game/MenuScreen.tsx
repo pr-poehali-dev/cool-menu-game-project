@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 interface Props {
   onPlay: () => void;
+  onInfo: () => void;
 }
 
-const MenuScreen = ({ onPlay }: Props) => {
+const MenuScreen = ({ onPlay, onInfo }: Props) => {
   const [visible, setVisible] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -167,16 +168,21 @@ const MenuScreen = ({ onPlay }: Props) => {
           <div className="menu-logo-cursed">CURSED</div>
           <div className="menu-logo-legacy">LEGACY</div>
         </div>
-        <div className="menu-subtitle">呪術廻戦 — Проклятая энергия</div>
+        <div className="menu-subtitle">呪術廻戦 — Проклятая энергия пробуждается</div>
         <div className="menu-controls-hint">
           <span>WASD / ↑↓←→ Движение</span>
           <span>Z / X Удар</span>
           <span>E Техника</span>
         </div>
-        <button className="menu-play-btn" onClick={onPlay}>
-          <span className="menu-play-arrow">▶</span>
-          НАЧАТЬ БИТВУ
-        </button>
+        <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
+          <button className="menu-play-btn" onClick={onPlay}>
+            <span className="menu-play-arrow">▶</span>
+            НАЧАТЬ ПУТЬ
+          </button>
+          <button className="menu-play-btn" onClick={onInfo} style={{ fontSize: 15, padding: "14px 28px", opacity: 0.75 }}>
+            ✦ ИНФО
+          </button>
+        </div>
       </div>
 
       <style>{`
