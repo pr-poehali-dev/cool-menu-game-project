@@ -1,21 +1,20 @@
 // =========================================================
 // gameState.ts — Cursed Legacy
-// Энергии с отсылками к персонажам манги JJK
 // =========================================================
 
 export type EnergyType =
   | "infinity"    // Годзё — Бесконечность
-  | "divergent"   // Годзё — Шесть глаз (расщепление)
-  | "straw"       // Юдзи — Праздник / Разборки
-  | "dismantle"   // Рёмен — Разобрать
-  | "cleave"      // Рёмен — Рассечь
-  | "ratio"       // Тодо — Пальцы / Обмен
-  | "blood"       // Нобара — Резонанс крови
-  | "puppet"      // Маки — Тело без CE
-  | "shadow"      // Мегуми — Тень
+  | "divergent"   // Итадори — Расщеплённый кулак
+  | "straw"       // Нобара — Соломенная кукла
+  | "dismantle"   // Сукуна — Разобрать
+  | "ratio"       // Нанами — Соотношение
+  | "boogie"      // Тодо — Бугги-Вугги
+  | "puppet"      // Маки — Небесное ограничение
+  | "shadow"      // Мегуми — Десять теней
   | "poison"      // Дзюго — Яд
-  | "lightning"   // Наная — Молния
-  | "max";        // Особый режим — Полный выброс CE
+  | "lightning"   // Хакари — Молния
+  | "cleave"      // Сукуна — Рассечь
+  | "max";        // Годзё — Пустотный пурпур
 
 export interface EnergyDef {
   id: EnergyType;
@@ -27,7 +26,7 @@ export interface EnergyDef {
   description: string;
   passive: string;
   limitation: string;
-  inspiration: string; // ← отсылка к персонажу
+  inspiration: string;
   statMods: {
     damage: number;
     speed: number;
@@ -105,29 +104,29 @@ export const ENERGIES: EnergyDef[] = [
   },
   {
     id: "ratio",
+    name: "Ratio Technique",
+    nameRu: "Соотношение",
+    kanji: "比",
+    color: "#fbbf24",
+    glowColor: "#fde68a",
+    inspiration: "Кэнто Нанами",
+    description: "Каждую цель делишь в уме на 10 частей — удар в точку соотношения 7:3 наносит критический урон. Просто, эффективно, без прикрас.",
+    passive: "Каждый 7-й удар — автоматически попадает в точку 7:3, нанося +80% урона",
+    limitation: "Техника требует терпения: первые 6 ударов без бонуса",
+    statMods: { damage: 1.15, speed: 0.95, defense: 1.1, energyRegen: 1.0, attackSpeed: 0.95 },
+  },
+  {
+    id: "boogie",
     name: "Boogie Woogie",
     nameRu: "Бугги-Вугги",
     kanji: "交",
     color: "#10b981",
     glowColor: "#6ee7b7",
-    inspiration: "Тодо Аой",
+    inspiration: "Аой Тодо",
     description: "Хлопок — и ты меняешься местами с врагом или союзником. Пространство — это шутка, а ты знаешь punch-line.",
     passive: "Каждые 8 ударов — мгновенный обмен позицией с ближайшим врагом (сбивает его)",
     limitation: "Обмен активируется автоматически — не всегда в удобный момент",
     statMods: { damage: 1.0, speed: 1.3, defense: 1.0, energyRegen: 1.1, attackSpeed: 1.1 },
-  },
-  {
-    id: "blood",
-    name: "Hairpin",
-    nameRu: "Шпилька",
-    kanji: "血",
-    color: "#be185d",
-    glowColor: "#f9a8d4",
-    inspiration: "Нобара Кугисаки",
-    description: "Накапливаешь CE в крови — взрыв электрического резонанса поражает всех врагов рядом. Один выстрел — несколько целей.",
-    passive: "При убийстве врага — мини-взрыв поражает ближайших на 50% от убивающего урона",
-    limitation: "CE регенерация снижена (-30%) — техника дорогостоящая",
-    statMods: { damage: 1.2, speed: 0.9, defense: 0.9, energyRegen: 0.7, attackSpeed: 0.85 },
   },
   {
     id: "puppet",
@@ -158,7 +157,7 @@ export const ENERGIES: EnergyDef[] = [
   {
     id: "poison",
     name: "Supernova",
-    nameRu: "Сверхновая",
+    nameRu: "Яд — Сверхновая",
     kanji: "毒",
     color: "#84cc16",
     glowColor: "#bef264",
@@ -171,11 +170,11 @@ export const ENERGIES: EnergyDef[] = [
   {
     id: "lightning",
     name: "Lightning",
-    nameRu: "Молния",
+    nameRu: "Джекпот — Молния",
     kanji: "雷",
     color: "#facc15",
     glowColor: "#fde68a",
-    inspiration: "Наная Хакари",
+    inspiration: "Кирара Хакари",
     description: "CE бьёт как молния — мгновенно и непредсказуемо. Но удача переменчива: иногда она ударяет дважды, иногда промахивается.",
     passive: "25% шанс удара молнией в случайного ближайшего врага после каждой атаки",
     limitation: "Молния может ударить в одного и того же врага повторно или промахнуться",
@@ -196,90 +195,245 @@ export const ENERGIES: EnergyDef[] = [
   },
 ];
 
-export interface Technique {
+// ── Техники сгруппированы по персонажам ──────────────────────────────────────
+
+export interface Move {
   id: string;
-  name: string;
   nameRu: string;
+  nameJp?: string;
   description: string;
-  requiredLevel: number;
   ceCost: number;
-  cooldown: number;
-  compatibleEnergies?: EnergyType[];
+  cooldownSec: number;
+  key: string; // кнопка
 }
 
-export const TECHNIQUES: Technique[] = [
+export interface TechniqueGroup {
+  character: string;
+  energies: EnergyType[]; // для каких энергий доступна
+  color: string;
+  kanji: string;
+  description: string;
+  moves: Move[];
+}
+
+export const TECHNIQUE_GROUPS: TechniqueGroup[] = [
   {
-    id: "basic_strike",
-    name: "Cursed Strike",
-    nameRu: "Проклятый удар",
-    description: "Базовый удар, усиленный CE. Урон и эффект зависят от энергии.",
-    requiredLevel: 1,
-    ceCost: 0,
-    cooldown: 0,
+    character: "Сатору Годзё",
+    energies: ["infinity", "max"],
+    color: "#60a5fa",
+    kanji: "∞",
+    description: "Техника Бесконечности — управление пространством и CE на высшем уровне",
+    moves: [
+      { id: "strike", nameRu: "Проклятый удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Базовый удар с CE. Урон зависит от энергии." },
+      { id: "blue", nameRu: "Синий", nameJp: "蒼", key: "E", ceCost: 30, cooldownSec: 1.5, description: "Притягивает ближайшего врага к игроку с силой CE. Урон при столкновении." },
+      { id: "red", nameRu: "Красный", nameJp: "赫", key: "Q", ceCost: 40, cooldownSec: 2.5, description: "Взрыв CE отталкивает всех врагов в радиусе 120px." },
+      { id: "purple", nameRu: "Пустотный пурпур", nameJp: "虚式 茈", key: "R", ceCost: 80, cooldownSec: 8, description: "Луч, стирающий всё на пути. Только для max-энергии." },
+    ],
   },
   {
-    id: "cursed_burst",
-    name: "Cursed Burst",
-    nameRu: "Выброс CE",
-    description: "Волна CE вокруг тебя. Отталкивает и ранит всех в радиусе.",
-    requiredLevel: 3,
-    ceCost: 30,
-    cooldown: 90,
+    character: "Юдзи Итадори",
+    energies: ["divergent"],
+    color: "#818cf8",
+    kanji: "裂",
+    description: "Техника расщеплённого кулака — CE-волна с задержкой усиливает каждый удар",
+    moves: [
+      { id: "strike", nameRu: "Проклятый удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Расщеплённый кулак: вторая волна CE бьёт спустя 0.3 сек." },
+      { id: "divergent_e", nameRu: "Blow (Праздник)", nameJp: "お祭り騒ぎ", key: "E", ceCost: 30, cooldownSec: 2, description: "Серия из трёх быстрых ударов с CE-вспышкой на каждом." },
+      { id: "rush", nameRu: "Рывок CE", key: "Q", ceCost: 20, cooldownSec: 1.5, description: "Мгновенный рывок вперёд с уроном на пути." },
+    ],
   },
   {
-    id: "cursed_dash",
-    name: "Cursed Dash",
-    nameRu: "Рывок CE",
-    description: "Молниеносный рывок с нанесением урона на пути.",
-    requiredLevel: 5,
-    ceCost: 20,
-    cooldown: 60,
+    character: "Нобара Кугисаки",
+    energies: ["straw"],
+    color: "#f59e0b",
+    kanji: "藁",
+    description: "Техника Соломенной куклы — гвозди и кровный резонанс",
+    moves: [
+      { id: "strike", nameRu: "Гвоздь (Удар)", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Забиваешь гвоздь в куклу — враг чувствует удар." },
+      { id: "hairpin", nameRu: "Шпилька", nameJp: "共鳴り", key: "E", ceCost: 35, cooldownSec: 2.5, description: "Кровный резонанс — взрыв CE поражает всех врагов рядом." },
+      { id: "resonance", nameRu: "Резонанс", key: "Q", ceCost: 25, cooldownSec: 3, description: "При получении урона — отправить 80% врагу с полным HP." },
+    ],
   },
   {
-    id: "reinforcement",
-    name: "Body Reinforcement",
-    nameRu: "Усиление тела",
-    description: "5 секунд — половина входящего урона.",
-    requiredLevel: 7,
-    ceCost: 40,
-    cooldown: 120,
+    character: "Рёмен Сукуна",
+    energies: ["dismantle", "cleave"],
+    color: "#ef4444",
+    kanji: "解",
+    description: "Техники Короля проклятий: Разобрать и Рассечь",
+    moves: [
+      { id: "strike", nameRu: "Разобрать", nameJp: "解", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Режущий поток CE мгновенно. Шанс 30% — двойной удар." },
+      { id: "dismantle_e", nameRu: "Разбрасывающий рассечь", key: "E", ceCost: 30, cooldownSec: 2, description: "Широкий веерный удар по всем врагам перед собой." },
+      { id: "domain", nameRu: "Расширение области", nameJp: "領域展開", key: "Q", ceCost: 70, cooldownSec: 10, description: "На 5 сек все удары наносят двойной урон. Только Сукуна." },
+    ],
+  },
+  {
+    character: "Кэнто Нанами",
+    energies: ["ratio"],
+    color: "#fbbf24",
+    kanji: "比",
+    description: "Техника соотношения — точность важнее грубой силы",
+    moves: [
+      { id: "strike", nameRu: "Удар 7:3", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Каждый 7-й удар — в точку соотношения, +80% урона." },
+      { id: "ratio_e", nameRu: "Сверхурочные", nameJp: "時間外労働", key: "E", ceCost: 30, cooldownSec: 2, description: "Серия усиленных ударов — как рабочий в конце смены." },
+      { id: "blunt", nameRu: "Тупой клинок", key: "Q", ceCost: 20, cooldownSec: 1.5, description: "Удар с отдачей — враг теряет скорость на 3 сек." },
+    ],
+  },
+  {
+    character: "Аой Тодо",
+    energies: ["boogie"],
+    color: "#10b981",
+    kanji: "交",
+    description: "Бугги-Вугги — мастер телепортации и обмена позициями",
+    moves: [
+      { id: "strike", nameRu: "Усиленный удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Каждые 8 ударов — обмен местами с ближайшим врагом." },
+      { id: "swap", nameRu: "Бугги-Вугги", nameJp: "芳心", key: "E", ceCost: 25, cooldownSec: 1.5, description: "Немедленный обмен позицией с целью. Цель дезориентирована 1 сек." },
+      { id: "phantom", nameRu: "Фантомный хлопок", key: "Q", ceCost: 35, cooldownSec: 3, description: "Три быстрых обмена подряд — враги не успевают понять." },
+    ],
+  },
+  {
+    character: "Маки Зенин",
+    energies: ["puppet"],
+    color: "#94a3b8",
+    kanji: "体",
+    description: "Небесное ограничение — тело без CE, доведённое до предела",
+    moves: [
+      { id: "strike", nameRu: "Физический удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Чистая физическая сила без CE. +40% урона по умолчанию." },
+      { id: "dash_atk", nameRu: "Рывок-удар", key: "E", ceCost: 0, cooldownSec: 1.5, description: "Стремительный рывок с ударом. CE не нужна." },
+      { id: "block", nameRu: "Контрудар", key: "Q", ceCost: 0, cooldownSec: 2, description: "При атаке в этот момент — урон отражается обратно." },
+    ],
+  },
+  {
+    character: "Мегуми Фусигуро",
+    energies: ["shadow"],
+    color: "#6366f1",
+    kanji: "影",
+    description: "Техника десяти теней — призыв духовных зверей",
+    moves: [
+      { id: "strike", nameRu: "Теневой удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Удар из тени. После убийства — теневой след замедляет врагов." },
+      { id: "divine_dog", nameRu: "Пёс-тень", nameJp: "玉犬", key: "E", ceCost: 30, cooldownSec: 2.5, description: "Призываешь теневого пса — тот атакует ближайшего врага." },
+      { id: "nue", nameRu: "Нуэ", nameJp: "鵺", key: "Q", ceCost: 40, cooldownSec: 4, description: "Духовная птица бьёт врагов молнией с воздуха." },
+    ],
+  },
+  {
+    character: "Дзюго (Спящий Дракон)",
+    energies: ["poison"],
+    color: "#84cc16",
+    kanji: "毒",
+    description: "Техника яда — медленное, неизбежное уничтожение врагов",
+    moves: [
+      { id: "strike", nameRu: "Отравляющий удар", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "Каждый удар накладывает 1 стак яда. 3 стака — 2 HP/сек 4 сек." },
+      { id: "venom_burst", nameRu: "Взрыв яда", nameJp: "毒爆発", key: "E", ceCost: 30, cooldownSec: 2, description: "Мгновенный выброс яда — накладывает 2 стака на всех рядом." },
+      { id: "miasma", nameRu: "Миазм", key: "Q", ceCost: 45, cooldownSec: 5, description: "Ядовитое облако на 4 сек. Враги в нём теряют HP." },
+    ],
+  },
+  {
+    character: "Кирара Хакари",
+    energies: ["lightning"],
+    color: "#facc15",
+    kanji: "雷",
+    description: "Джекпот — непредсказуемая удача, молния бьёт по-своему",
+    moves: [
+      { id: "strike", nameRu: "Удар с разрядом", key: "Z / X", ceCost: 0, cooldownSec: 0, description: "25% шанс молнии в случайного врага после удара." },
+      { id: "jackpot", nameRu: "Джекпот!", nameJp: "大当たり", key: "E", ceCost: 30, cooldownSec: 3, description: "Случайный эффект: тройной удар, исцеление или цепная молния." },
+      { id: "barrier", nameRu: "Барьер CE", key: "Q", ceCost: 35, cooldownSec: 4, description: "На 3 сек — электрический щит. Атаки по тебе бьют током." },
+    ],
   },
 ];
 
+export function getTechniqueGroup(energy: EnergyType): TechniqueGroup | undefined {
+  return TECHNIQUE_GROUPS.find(g => g.energies.includes(energy));
+}
+
+// ── Прогресс персонажа ────────────────────────────────────────────────────────
+
 export interface CharacterProgress {
-  energy: EnergyType;
   level: number;
   xp: number;
   xpToNext: number;
   unlockedTechniques: string[];
-  comboCount: number;
-  smolderingStacks: number;
-  resonantStacks: number;
-  hitsUntilPierce: number;
-  freezeStacks: Map<number, number>;
-  viscousStacks: Map<number, number>;
+  energy: EnergyType;
+  // квест
+  activeQuest: string | null;
+  questProgress: number;
+  questGoal: number;
 }
 
-export function xpForLevel(level: number): number {
-  return Math.floor(100 * Math.pow(1.45, level - 1));
+export function xpForLevel(lvl: number): number {
+  return 60 + (lvl - 1) * 40;
 }
 
 export function createProgress(energy: EnergyType): CharacterProgress {
   return {
-    energy,
     level: 1,
     xp: 0,
     xpToNext: xpForLevel(1),
-    unlockedTechniques: ["basic_strike"],
-    comboCount: 0,
-    smolderingStacks: 0,
-    resonantStacks: 0,
-    hitsUntilPierce: 3,
-    freezeStacks: new Map(),
-    viscousStacks: new Map(),
+    unlockedTechniques: ["strike"],
+    energy,
+    activeQuest: null,
+    questProgress: 0,
+    questGoal: 0,
   };
 }
 
 export function getEnergyDef(id: EnergyType): EnergyDef {
   return ENERGIES.find(e => e.id === id) ?? ENERGIES[0];
+}
+
+// ── Управление (кастомные кнопки) ─────────────────────────────────────────────
+
+export interface KeyBindings {
+  up: string;
+  down: string;
+  left: string;
+  right: string;
+  attack: string;
+  attack2: string;
+  technique: string;
+  technique2: string;
+  interact: string;
+}
+
+export const DEFAULT_BINDINGS: KeyBindings = {
+  up: "KeyW",
+  down: "KeyS",
+  left: "KeyA",
+  right: "KeyD",
+  attack: "KeyZ",
+  attack2: "KeyX",
+  technique: "KeyE",
+  technique2: "KeyQ",
+  interact: "KeyE",
+};
+
+const BINDINGS_STORAGE_KEY = "cursed_legacy_bindings";
+
+export function loadBindings(): KeyBindings {
+  try {
+    const raw = localStorage.getItem(BINDINGS_STORAGE_KEY);
+    if (raw) return { ...DEFAULT_BINDINGS, ...JSON.parse(raw) };
+  } catch { /* ignore */ }
+  return { ...DEFAULT_BINDINGS };
+}
+
+export function saveBindings(b: KeyBindings): void {
+  localStorage.setItem(BINDINGS_STORAGE_KEY, JSON.stringify(b));
+}
+
+export function resetBindings(): KeyBindings {
+  localStorage.removeItem(BINDINGS_STORAGE_KEY);
+  return { ...DEFAULT_BINDINGS };
+}
+
+export function keyCodeToLabel(code: string): string {
+  const map: Record<string, string> = {
+    KeyA:"A", KeyB:"B", KeyC:"C", KeyD:"D", KeyE:"E", KeyF:"F", KeyG:"G",
+    KeyH:"H", KeyI:"I", KeyJ:"J", KeyK:"K", KeyL:"L", KeyM:"M", KeyN:"N",
+    KeyO:"O", KeyP:"P", KeyQ:"Q", KeyR:"R", KeyS:"S", KeyT:"T", KeyU:"U",
+    KeyV:"V", KeyW:"W", KeyX:"X", KeyY:"Y", KeyZ:"Z",
+    ArrowUp:"↑", ArrowDown:"↓", ArrowLeft:"←", ArrowRight:"→",
+    Space:"Пробел", Enter:"Enter", ShiftLeft:"Shift", ControlLeft:"Ctrl",
+    Digit1:"1", Digit2:"2", Digit3:"3", Digit4:"4", Digit5:"5",
+    Digit6:"6", Digit7:"7", Digit8:"8", Digit9:"9", Digit0:"0",
+  };
+  return map[code] ?? code.replace("Key","");
 }

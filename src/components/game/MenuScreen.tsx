@@ -169,11 +169,6 @@ const MenuScreen = ({ onPlay, onInfo }: Props) => {
           <div className="menu-logo-legacy">LEGACY</div>
         </div>
         <div className="menu-subtitle">呪術廻戦 — Проклятая энергия пробуждается</div>
-        <div className="menu-controls-hint">
-          <span>WASD / ↑↓←→ Движение</span>
-          <span>Z / X Удар</span>
-          <span>E Техника</span>
-        </div>
         <div style={{ display: "flex", gap: 14, marginTop: 4 }}>
           <button className="menu-play-btn" onClick={onPlay}>
             <span className="menu-play-arrow">▶</span>

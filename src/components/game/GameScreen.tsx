@@ -1,30 +1,24 @@
 import { useEffect, useRef, useCallback } from "react";
-import { EnergyType, getEnergyDef, CharacterProgress, xpForLevel, TECHNIQUES } from "./gameState";
+import { EnergyType, getEnergyDef, CharacterProgress, xpForLevel, loadBindings } from "./gameState";
 
 interface Props {
   energy: EnergyType;
   progress: CharacterProgress;
   onGameOver: (finalProgress: CharacterProgress) => void;
+  onVictory: (finalProgress: CharacterProgress) => void;
 }
 
 const W = 900, H = 520;
 const WORLD_W = 2000, WORLD_H = 1400;
 const CAMERA_LERP = 0.09;
-const ATTACK_RANGE = 58;
-const ATTACK_COOLDOWN = 24;
+const ATTACK_RANGE = 56;
+// Кулдаун атаки: базовый. Игрок ОБЯЗАН отпустить и снова нажать — нет авто-спама
+const ATTACK_COOLDOWN_BASE = 28;
 const SPECIAL_COOLDOWN = 90;
-
-// ── TOP-DOWN с лёгкой перспективой ──────────────────────────────────────────
-// Мир X → экран X (прямо)
-// Мир Y → экран Y × PERSP (немного сжато по вертикали — эффект наклона камеры)
-// Нажал ВЛЕВО → идёшь влево по экрану. Нажал ВВЕРХ → идёшь вверх по экрану.
-const PERSP = 0.72; // степень "наклона" камеры (1.0 = полный top-down, 0.5 = 45°)
+const PERSP = 0.72;
 
 function toScreen(wx: number, wy: number, camX: number, camY: number) {
-  return {
-    sx: (wx - camX) + W / 2,
-    sy: (wy - camY) * PERSP + H / 2,
-  };
+  return { sx: (wx - camX) + W / 2, sy: (wy - camY) * PERSP + H / 2 };
 }
 
 interface Vec2 { x: number; y: number; }
@@ -35,16 +29,15 @@ interface Player {
   attackTimer: number; invincible: number;
   facing: Vec2;
   attacking: boolean; attackAnim: number;
+  // флаг: кнопка атаки была нажата — нужно отпустить перед следующим ударом
+  attackKeyHeld: boolean;
   ce: number; maxCe: number;
   specialTimer: number;
   walkCycle: number;
-  combo: number; comboTimer: number;
-  smolderingBonus: number; smolderingTimer: number;
-  resonantBonus: number;
-  hitsUntilPierce: number;
   chargeTimer: number; chargeReady: boolean;
   level: number; xp: number; xpToNext: number;
   xpGain: number; xpGainTimer: number;
+  comboCount: number; // для ratio 7:3
 }
 
 interface Enemy {
@@ -54,33 +47,20 @@ interface Enemy {
   type: "curse" | "special";
   aiTimer: number; hitFlash: number;
   walkCycle: number; facing: number;
-  viscousStacks: number; viscousTimer: number;
-  freezeStacks: number; freezeTimer: number;
   frozen: boolean; frozenTimer: number;
   slowTimer: number;
 }
 
-interface Obstacle {
-  x: number; y: number; w: number; h: number;
-  wallH: number; type: "building" | "pillar" | "ruin";
-}
-
-interface Particle {
-  x: number; y: number; vx: number; vy: number;
-  life: number; maxLife: number; color: string; size: number;
-  shape: "circle" | "spark" | "ring";
-}
-
-interface FloatText {
-  x: number; y: number; text: string; color: string;
-  life: number; vy: number;
-}
+interface Obstacle { x: number; y: number; w: number; h: number; wallH: number; type: "building" | "pillar" | "ruin"; }
+interface Particle { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; size: number; shape: "circle" | "spark" | "ring"; }
+interface FloatText { x: number; y: number; text: string; color: string; life: number; vy: number; }
 
 interface GameData {
   player: Player; enemies: Enemy[]; obstacles: Obstacle[];
   particles: Particle[]; floatTexts: FloatText[];
   camX: number; camY: number;
-  keys: Set<string>; tick: number; running: boolean;
+  keys: Set<string>; prevKeys: Set<string>; tick: number; running: boolean;
+  won: boolean;
 }
 
 let enemyIdCounter = 0;
@@ -102,10 +82,7 @@ const createObstacles = (): Obstacle[] => {
         wallH:type==="pillar"?55+rng(0,35):90+rng(0,110), type });
     }
   });
-  for (let i=0;i<12;i++) obs.push({
-    x:rng(80,WORLD_W-80), y:rng(80,WORLD_H-80),
-    w:22+rng(0,14), h:22+rng(0,14), wallH:45+rng(0,45), type:"pillar",
-  });
+  for (let i=0;i<10;i++) obs.push({ x:rng(80,WORLD_W-80), y:rng(80,WORLD_H-80), w:22+rng(0,14), h:22+rng(0,14), wallH:45+rng(0,45), type:"pillar" });
   return obs;
 };
 
@@ -124,21 +101,17 @@ const spawnEnemies = (): Enemy[] => {
       alive:true, type:isSpecial?"special":"curse",
       aiTimer:Math.floor(Math.random()*120), hitFlash:0,
       walkCycle:Math.random()*Math.PI*2, facing:1,
-      viscousStacks:0, viscousTimer:0,
-      freezeStacks:0, freezeTimer:0,
-      frozen:false, frozenTimer:0,
-      slowTimer:0,
+      frozen:false, frozenTimer:0, slowTimer:0,
     };
   });
 };
 
 const circleRect = (cx:number,cy:number,r:number,rx:number,ry:number,rw:number,rh:number) => {
-  const nx=Math.max(rx,Math.min(cx,rx+rw));
-  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const nx=Math.max(rx,Math.min(cx,rx+rw)), ny=Math.max(ry,Math.min(cy,ry+rh));
   return (cx-nx)**2+(cy-ny)**2<r*r;
 };
 
-// ── Пол — шашечный узор ───────────────────────────────────────────────────────
+// ── Пол ────────────────────────────────────────────────────────────────────────
 const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, tick: number) => {
   ctx.fillStyle="#07060f"; ctx.fillRect(0,0,W,H);
   const ts=72;
@@ -149,23 +122,21 @@ const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, ti
       const tl=toScreen(wx,wy,camX,camY);
       const br=toScreen(wx+ts,wy+ts,camX,camY);
       if (br.sx<-4||tl.sx>W+4||br.sy<-4||tl.sy>H+4) continue;
-      const xi=Math.floor(wx/ts),yi=Math.floor(wy/ts);
+      const xi=Math.floor(wx/ts), yi=Math.floor(wy/ts);
       ctx.fillStyle=(xi+yi)%2===0?"#09080f":"#0c0b16";
       ctx.fillRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
-      ctx.strokeStyle="rgba(67,56,202,0.06)"; ctx.lineWidth=1;
+      ctx.strokeStyle="rgba(67,56,202,0.05)"; ctx.lineWidth=1;
       ctx.strokeRect(tl.sx, tl.sy, br.sx-tl.sx, br.sy-tl.sy);
     }
   }
-  // Магические круги на полу
-  const circles=[{wx:700,wy:450,r:100},{wx:1300,wy:700,r:80},{wx:450,wy:1050,r:90},{wx:1700,wy:380,r:70}];
+  const circles=[{wx:700,wy:450,r:100},{wx:1300,wy:700,r:80},{wx:450,wy:1050,r:90}];
   circles.forEach(({wx,wy,r})=>{
     const c=toScreen(wx,wy,camX,camY);
-    const pulse=0.1+0.07*Math.sin(tick*0.035);
-    // Нарисуем эллипс с учётом PERSP сжатия
+    const pulse=0.08+0.05*Math.sin(tick*0.03);
     ctx.beginPath(); ctx.ellipse(c.sx,c.sy,r,r*PERSP,0,0,Math.PI*2);
     ctx.strokeStyle=`rgba(139,92,246,${pulse})`; ctx.lineWidth=2; ctx.stroke();
     for (let i=0;i<5;i++) {
-      const a1=(i/5)*Math.PI*2+tick*0.005, a2=((i+2)/5)*Math.PI*2+tick*0.005;
+      const a1=(i/5)*Math.PI*2+tick*0.004, a2=((i+2)/5)*Math.PI*2+tick*0.004;
       ctx.beginPath();
       ctx.moveTo(c.sx+Math.cos(a1)*r*0.75,c.sy+Math.sin(a1)*r*PERSP*0.75);
       ctx.lineTo(c.sx+Math.cos(a2)*r*0.75,c.sy+Math.sin(a2)*r*PERSP*0.75);
@@ -174,7 +145,7 @@ const drawFloor = (ctx: CanvasRenderingContext2D, camX: number, camY: number, ti
   });
 };
 
-// ── Препятствия — прямые стены (не isometric, просто "выдавленные" вверх) ────
+// ── Препятствие ────────────────────────────────────────────────────────────────
 const drawObstacle = (ctx: CanvasRenderingContext2D, obs: Obstacle, camX: number, camY: number) => {
   const tl=toScreen(obs.x,obs.y,camX,camY);
   const tr=toScreen(obs.x+obs.w,obs.y,camX,camY);
@@ -182,26 +153,15 @@ const drawObstacle = (ctx: CanvasRenderingContext2D, obs: Obstacle, camX: number
   const bl=toScreen(obs.x,obs.y+obs.h,camX,camY);
   if (tr.sx<-20||bl.sx>W+20||tl.sy>H+obs.wallH||br.sy<-obs.wallH) return;
   const wH=obs.wallH;
-
   if (obs.type==="building") {
-    // Передняя стена (ближняя к камере — нижняя грань)
-    ctx.beginPath();
-    ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(br.sx,br.sy);
-    ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(br.sx,br.sy); ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
     ctx.fillStyle="#0c111e"; ctx.fill(); ctx.strokeStyle="#1e2a40"; ctx.lineWidth=1; ctx.stroke();
-    // Правая стена
-    ctx.beginPath();
-    ctx.moveTo(br.sx,br.sy); ctx.lineTo(tr.sx,tr.sy);
-    ctx.lineTo(tr.sx,tr.sy-wH); ctx.lineTo(br.sx,br.sy-wH); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(br.sx,br.sy); ctx.lineTo(tr.sx,tr.sy); ctx.lineTo(tr.sx,tr.sy-wH); ctx.lineTo(br.sx,br.sy-wH); ctx.closePath();
     ctx.fillStyle="#0a0e1a"; ctx.fill(); ctx.stroke();
-    // Крыша
-    ctx.beginPath();
-    ctx.moveTo(tl.sx,tl.sy-wH); ctx.lineTo(tr.sx,tr.sy-wH);
-    ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(tl.sx,tl.sy-wH); ctx.lineTo(tr.sx,tr.sy-wH); ctx.lineTo(br.sx,br.sy-wH); ctx.lineTo(bl.sx,bl.sy-wH); ctx.closePath();
     ctx.fillStyle="#1a2035"; ctx.fill(); ctx.strokeStyle="#2d3a56"; ctx.stroke();
-    // Окна
     const numWin=Math.max(1,Math.floor(wH/30));
-    ctx.fillStyle="rgba(251,191,36,0.5)";
+    ctx.fillStyle="rgba(251,191,36,0.4)";
     for (let row=0;row<numWin;row++) {
       const wy2=bl.sy-wH*0.85+row*(wH/(numWin+1));
       const span=br.sx-bl.sx;
@@ -210,235 +170,239 @@ const drawObstacle = (ctx: CanvasRenderingContext2D, obs: Obstacle, camX: number
     }
   } else if (obs.type==="pillar") {
     const cx=(tl.sx+br.sx)/2, cy=(tl.sy+br.sy)/2;
-    const rx=Math.abs(tr.sx-tl.sx)/2+2, ry=(br.sy-tl.sy)/2*PERSP+2;
-    ctx.beginPath();
-    ctx.moveTo(cx-rx,cy); ctx.lineTo(cx-rx,cy-wH);
-    ctx.arc(cx,cy-wH,rx,Math.PI,0);
-    ctx.lineTo(cx+rx,cy); ctx.fillStyle="#1c1c2e"; ctx.fill();
-    ctx.strokeStyle="#4a4a6a"; ctx.lineWidth=1; ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
-    ctx.fillStyle="#252535"; ctx.fill(); ctx.stroke();
-    ctx.strokeStyle="rgba(139,92,246,0.25)"; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(cx-rx*0.3,cy-wH*0.15); ctx.lineTo(cx,cy-wH*0.7); ctx.stroke();
+    const rx=Math.abs(tr.sx-tl.sx)/2+2;
+    ctx.beginPath(); ctx.moveTo(cx-rx,cy); ctx.lineTo(cx-rx,cy-wH); ctx.arc(cx,cy-wH,rx,Math.PI,0); ctx.lineTo(cx+rx,cy);
+    ctx.fillStyle="#1c1c2e"; ctx.fill(); ctx.strokeStyle="#4a4a6a"; ctx.lineWidth=1; ctx.stroke();
+    const ry=(br.sy-tl.sy)/2*PERSP+2;
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2); ctx.fillStyle="#252535"; ctx.fill(); ctx.stroke();
   } else {
-    // Руины
-    ctx.beginPath();
-    ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(bl.sx,bl.sy-wH*0.7);
-    ctx.lineTo(br.sx,br.sy-wH*0.5); ctx.lineTo(br.sx,br.sy); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy); ctx.lineTo(bl.sx,bl.sy-wH*0.7); ctx.lineTo(br.sx,br.sy-wH*0.5); ctx.lineTo(br.sx,br.sy); ctx.closePath();
     ctx.fillStyle="#18181a"; ctx.fill(); ctx.strokeStyle="#2d2d35"; ctx.lineWidth=1; ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(bl.sx,bl.sy-wH*0.7); ctx.lineTo(br.sx,br.sy-wH*0.5);
-    ctx.lineTo(tr.sx,tr.sy-wH*0.4); ctx.lineTo(tl.sx,tl.sy-wH*0.6); ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(bl.sx,bl.sy-wH*0.7); ctx.lineTo(br.sx,br.sy-wH*0.5); ctx.lineTo(tr.sx,tr.sy-wH*0.4); ctx.lineTo(tl.sx,tl.sy-wH*0.6); ctx.closePath();
     ctx.fillStyle="#1e1e22"; ctx.fill();
-    ctx.strokeStyle="rgba(139,92,246,0.2)"; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(bl.sx+4,bl.sy-8); ctx.lineTo((bl.sx+br.sx)/2,(bl.sy+br.sy)/2-wH*0.3); ctx.stroke();
   }
 };
 
-// ── Игрок ─────────────────────────────────────────────────────────────────────
+// ── Игрок — чёткий пиксельный вид ─────────────────────────────────────────────
 const drawPlayer = (
   ctx: CanvasRenderingContext2D, p: Player, tick: number,
   camX: number, camY: number, energyColor: string, glowColor: string
 ) => {
   const { sx, sy } = toScreen(p.x, p.y, camX, camY);
-  if (p.invincible>0&&Math.floor(tick/4)%2===0) return;
-  const isMoving=Math.abs(p.vx)>0.2||Math.abs(p.vy)>0.2;
-  const legSwing=isMoving?Math.sin(p.walkCycle)*7:0;
-  const armSwing=isMoving?Math.sin(p.walkCycle+Math.PI)*5:0;
-  const flip=p.facing.x>=0?1:-1;
+  if (p.invincible>0 && Math.floor(tick/3)%2===0) return;
+  const isMoving = Math.abs(p.vx)>0.2||Math.abs(p.vy)>0.2;
+  const walkFrame = Math.floor(p.walkCycle / 5) % 4; // 4 кадра шага
+  const flip = p.facing.x>=0 ? 1 : -1;
 
-  ctx.save(); ctx.translate(sx,sy);
+  ctx.save();
+  ctx.translate(Math.round(sx), Math.round(sy));
+  // Отключаем сглаживание для чёткости
+  ctx.imageSmoothingEnabled = false;
 
-  // CE аура
-  const cePct=p.ce/p.maxCe;
-  if (cePct>0.1) {
-    for (let r=0;r<2;r++) {
-      ctx.beginPath();
-      ctx.arc(0,-16,20+r*8+Math.sin(tick*0.1+r)*2,0,Math.PI*2);
-      ctx.strokeStyle=`${energyColor}${Math.floor(cePct*(0.4-r*0.15)*255).toString(16).padStart(2,"0")}`;
-      ctx.lineWidth=1.5-r*0.4; ctx.stroke();
-    }
-  }
-  if (p.smolderingBonus>0) {
-    ctx.beginPath(); ctx.arc(0,-16,22+Math.sin(tick*0.08)*3,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(251,146,60,${p.smolderingBonus*0.6})`; ctx.lineWidth=2; ctx.stroke();
+  // CE-аура (за персонажем)
+  const cePct = p.ce / p.maxCe;
+  if (cePct > 0.1) {
+    ctx.beginPath();
+    ctx.arc(0, -18, 22+Math.sin(tick*0.08)*1.5, 0, Math.PI*2);
+    ctx.strokeStyle = `${energyColor}${Math.floor(cePct*70).toString(16).padStart(2,"0")}`;
+    ctx.lineWidth = 2; ctx.stroke();
   }
   if (p.chargeTimer>30) {
-    const cp=Math.min(1,(p.chargeTimer-30)/60);
-    ctx.beginPath(); ctx.arc(0,-16,24,-Math.PI/2,-Math.PI/2+Math.PI*2*cp);
-    ctx.strokeStyle=p.chargeReady?"#f0abfc":`rgba(192,132,252,${cp})`; ctx.lineWidth=3; ctx.stroke();
+    const cp = Math.min(1,(p.chargeTimer-30)/60);
+    ctx.beginPath(); ctx.arc(0,-18,26,-Math.PI/2,-Math.PI/2+Math.PI*2*cp);
+    ctx.strokeStyle = p.chargeReady ? "#f0abfc" : `rgba(192,132,252,${cp})`;
+    ctx.lineWidth = 3; ctx.stroke();
   }
 
-  // Тень под ногами
-  ctx.beginPath(); ctx.ellipse(0,2,10,4,0,0,Math.PI*2);
-  ctx.fillStyle="rgba(0,0,0,0.35)"; ctx.fill();
+  // Тень
+  ctx.beginPath(); ctx.ellipse(0, 2, 9, 4, 0, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.fill();
 
-  // Ноги
-  [[-flip*5,-legSwing*0.04],[flip*5,legSwing*0.04]].forEach(([lx,rot])=>{
-    ctx.fillStyle="#111827"; ctx.save();
-    ctx.translate(lx as number,0); ctx.rotate(rot as number);
-    ctx.fillRect(-3.5,0,7,18);
-    ctx.fillStyle="#1f2937"; ctx.fillRect(-4.5,15,10,5);
-    ctx.restore();
-  });
+  // Анимация ходьбы: смещение ног
+  const legL_dy = isMoving ? (walkFrame<2?-2:2) : 0;
+  const legR_dy = isMoving ? (walkFrame<2?2:-2) : 0;
 
-  // Тело
-  ctx.fillStyle="#0f172a"; ctx.fillRect(-9,-24,18,22);
-  ctx.strokeStyle="#1e3a5f"; ctx.lineWidth=1; ctx.strokeRect(-9,-24,18,22);
-  ctx.fillStyle="#2d3f5a";
-  for (let i=0;i<4;i++) ctx.fillRect(-1,-22+i*5,2,2);
-  ctx.strokeStyle="#2d4a7a"; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(-5,-24); ctx.lineTo(0,-17); ctx.lineTo(5,-24); ctx.stroke();
+  // ── Ноги (4 пикселя шириной, чёткие) ──
+  const legColor = "#0f1a2e";
+  const bootColor = "#0a0f1c";
+  // Левая нога
+  ctx.fillStyle = legColor;
+  ctx.fillRect(-8, legL_dy, 6, 16);
+  ctx.fillStyle = bootColor;
+  ctx.fillRect(-9, 14+legL_dy, 8, 5);
+  // Правая нога
+  ctx.fillStyle = legColor;
+  ctx.fillRect(2, legR_dy, 6, 16);
+  ctx.fillStyle = bootColor;
+  ctx.fillRect(1, 14+legR_dy, 8, 5);
 
-  // Руки
-  [[-flip*10,armSwing*0.05,false],[flip*10,-armSwing*0.05,true]].forEach(([ax,rot,isRight])=>{
-    const isAttackArm=p.attacking&&((isRight&&flip>0)||(!isRight&&flip<0));
-    ctx.fillStyle="#0f172a"; ctx.save();
-    ctx.translate(ax as number,-21);
-    ctx.rotate((rot as number)+(isAttackArm?-0.55*flip:0));
-    ctx.fillRect(-3,0,6,isAttackArm?22:16);
-    ctx.fillStyle="#d4a574";
-    ctx.beginPath(); ctx.arc(0,isAttackArm?24:18,4,0,Math.PI*2); ctx.fill();
-    ctx.restore();
-  });
+  // ── Тело — форменная куртка ──
+  ctx.fillStyle = "#0f172a"; // основной цвет
+  ctx.fillRect(-9, -22, 18, 22);
+  // Детализация — воротник и V-образный вырез
+  ctx.strokeStyle = "#1e3a5f";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-9, -22, 18, 22);
+  // Линия воротника (V-образная)
+  ctx.beginPath();
+  ctx.moveTo(-4, -22); ctx.lineTo(0, -16); ctx.lineTo(4, -22);
+  ctx.strokeStyle = "#2d4a7a"; ctx.lineWidth = 1.5; ctx.stroke();
+  // Пуговицы — яркие точки
+  ctx.fillStyle = energyColor;
+  for (let i=0;i<3;i++) {
+    ctx.beginPath(); ctx.arc(0, -18+i*5, 1.5, 0, Math.PI*2); ctx.fill();
+  }
 
-  // Шея + голова
-  ctx.fillStyle="#c9a87c"; ctx.fillRect(-3,-29,6,7);
-  ctx.fillStyle="#e8c9a0";
-  ctx.beginPath(); ctx.ellipse(0,-36,7,8,0,0,Math.PI*2); ctx.fill();
+  // ── Руки ──
+  const armSwing = isMoving ? (walkFrame%2===0?2:-2) : 0;
+  // Левая рука
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(-13, -20+armSwing, 5, 15);
+  // Правая рука
+  ctx.fillRect(8, -20-armSwing, 5, 15);
+  // Атакующая рука
+  if (p.attacking && p.attackAnim>0) {
+    const armX = flip>0 ? 8 : -13;
+    const reach = (p.attackAnim/12)*8;
+    ctx.fillStyle = energyColor+"88";
+    ctx.fillRect(armX+flip*reach, -20-armSwing*flip, 5, 15);
+  }
+  // Кисти рук
+  ctx.fillStyle = "#d4a574";
+  ctx.fillRect(-13, -6+armSwing, 5, 5);
+  ctx.fillRect(8, -6-armSwing, 5, 5);
 
-  // Волосы
-  ctx.fillStyle="#1a1a1a";
-  ctx.beginPath(); ctx.ellipse(0,-40,7,5,0,0,Math.PI*2); ctx.fill();
-  [[-6,-38,-9,-46],[0,-41,0,-48],[6,-38,9,-46]].forEach(([x1,y1,x2,y2])=>{
-    ctx.beginPath(); ctx.moveTo(x1-3,y1); ctx.lineTo(x2,y2); ctx.lineTo(x1+3,y1); ctx.closePath(); ctx.fill();
-  });
+  // ── Шея ──
+  ctx.fillStyle = "#c9a87c";
+  ctx.fillRect(-2, -27, 4, 6);
 
-  // Глаза
-  ctx.fillStyle="#1a1a2e";
-  ctx.fillRect(flip-4,-35,5,3); ctx.fillRect(flip+3,-35,5,3);
-  ctx.fillStyle="#6b7280";
-  ctx.fillRect(flip-3,-35,2,2); ctx.fillRect(flip+4,-35,2,2);
+  // ── Голова — чёткий прямоугольник (пиксель-арт стиль) ──
+  ctx.fillStyle = "#e8c9a0";
+  ctx.fillRect(-7, -38, 14, 14);
+  // Обводка головы
+  ctx.strokeStyle = "#c9a87c"; ctx.lineWidth = 1;
+  ctx.strokeRect(-7, -38, 14, 14);
 
-  // Слэш атаки
-  if (p.attacking&&p.attackAnim>0) {
-    const prog=p.attackAnim/12;
-    const ang=Math.atan2(p.facing.y,p.facing.x);
-    ctx.beginPath(); ctx.moveTo(0,-16);
-    ctx.arc(0,-16,ATTACK_RANGE*0.65,ang-0.9,ang+0.9); ctx.closePath();
-    ctx.fillStyle=`${energyColor}${Math.floor(prog*55).toString(16).padStart(2,"0")}`; ctx.fill();
-    ctx.strokeStyle=`${glowColor}${Math.floor(prog*200).toString(16).padStart(2,"0")}`;
-    ctx.lineWidth=3; ctx.stroke();
+  // Волосы — сверху и по сторонам
+  ctx.fillStyle = "#1a1a1a";
+  ctx.fillRect(-7, -42, 14, 6); // верхний блок волос
+  // Боковые прядки
+  ctx.fillRect(-9, -40, 3, 8);  // левая прядь
+  ctx.fillRect(6,  -40, 3, 8);  // правая прядь
+  // Шипы волос (3 шипа сверху)
+  for (let i=0;i<3;i++) {
+    ctx.beginPath();
+    ctx.moveTo(-5+i*5, -42); ctx.lineTo(-3+i*5, -47); ctx.lineTo(-1+i*5, -42);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Глаза — белки + зрачки
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(-5, -33, 4, 3); // левый глаз
+  ctx.fillRect(1,  -33, 4, 3); // правый глаз
+  ctx.fillStyle = "#1a1a2e";
+  // Зрачок смотрит в сторону facing
+  ctx.fillRect(-5+(flip>0?2:0), -33, 2, 3);
+  ctx.fillRect(1+(flip>0?2:0),  -33, 2, 3);
+  // Бровь
+  ctx.fillStyle = "#111";
+  ctx.fillRect(-6, -36, 5, 2);
+  ctx.fillRect(1,  -36, 5, 2);
+
+  // ── Слэш атаки ──
+  if (p.attacking && p.attackAnim>0) {
+    const prog = p.attackAnim/12;
+    const ang = Math.atan2(p.facing.y, p.facing.x);
+    ctx.beginPath(); ctx.moveTo(0,-18);
+    ctx.arc(0,-18,ATTACK_RANGE*0.65,ang-0.85,ang+0.85); ctx.closePath();
+    ctx.fillStyle = `${energyColor}${Math.floor(prog*50).toString(16).padStart(2,"0")}`;
+    ctx.fill();
+    ctx.strokeStyle = `${glowColor}${Math.floor(prog*180).toString(16).padStart(2,"0")}`;
+    ctx.lineWidth = 2.5; ctx.stroke();
   }
 
   ctx.restore();
 };
 
-// ── Враг ──────────────────────────────────────────────────────────────────────
+// ── Враг ────────────────────────────────────────────────────────────────────────
 const drawEnemy = (ctx: CanvasRenderingContext2D, e: Enemy, camX: number, camY: number, tick: number) => {
   if (!e.alive) return;
-  const { sx, sy } = toScreen(e.x,e.y,camX,camY);
+  const { sx, sy } = toScreen(e.x, e.y, camX, camY);
   if (sx<-80||sx>W+80||sy<-150||sy>H+80) return;
-  const flash=e.hitFlash>0;
-  const wc=e.walkCycle;
-  ctx.save(); ctx.translate(sx,sy);
+  const flash = e.hitFlash>0;
+  ctx.save(); ctx.translate(Math.round(sx), Math.round(sy));
+  ctx.imageSmoothingEnabled = false;
 
-  // Тень
-  ctx.beginPath(); ctx.ellipse(0,4,e.type==="special"?22:14,e.type==="special"?8:5,0,0,Math.PI*2);
-  ctx.fillStyle="rgba(0,0,0,0.4)"; ctx.fill();
-
-  if (e.type==="special") {
-    const ls=Math.sin(wc)*7;
-    [[-10,ls],[10,-ls]].forEach(([lx,rot])=>{
-      ctx.fillStyle=flash?"#fff":"#7c0000"; ctx.save();
-      ctx.translate(lx as number,2); ctx.rotate((rot as number)*0.04);
-      ctx.fillRect(-6,0,12,22);
-      ctx.fillStyle=flash?"#fca5a5":"#450a0a";
-      [-4,0,4].forEach(cx2=>ctx.fillRect(cx2-1,22,3,7));
-      ctx.restore();
-    });
-    ctx.fillStyle=flash?"#fff":"#991b1b";
-    ctx.beginPath(); ctx.ellipse(0,-18,20,16,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle=flash?"#fbbf24":"#7f1d1d"; ctx.lineWidth=2; ctx.stroke();
-    [[-22,1],[22,-1]].forEach(([ax,sw])=>{
-      ctx.fillStyle=flash?"#fff":"#b91c1c"; ctx.save();
-      ctx.translate(ax as number,-22); ctx.rotate((sw as number)*Math.sin(wc)*0.08);
-      ctx.fillRect(-5,0,10,26);
-      ctx.fillStyle=flash?"#fca5a5":"#450a0a";
-      [-3,0,3].forEach(cx2=>ctx.fillRect(cx2-1,26,3,8));
-      ctx.restore();
-    });
-    ctx.fillStyle=flash?"#fff":"#7c0000";
-    ctx.beginPath(); ctx.ellipse(0,-40,18,16,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle=flash?"#fbbf24":"#dc2626"; ctx.lineWidth=2; ctx.stroke();
-    [[-8,-43],[8,-43],[0,-36]].forEach(([ex2,ey2])=>{
-      ctx.beginPath(); ctx.arc(ex2 as number,ey2 as number,4,0,Math.PI*2);
-      ctx.fillStyle=flash?"#dc2626":"#fbbf24"; ctx.fill();
-      ctx.fillStyle="#000"; ctx.beginPath(); ctx.arc(ex2 as number,ey2 as number,2,0,Math.PI*2); ctx.fill();
-    });
-    if (e.frozen) {
-      ctx.beginPath(); ctx.ellipse(0,-20,22,28,0,0,Math.PI*2);
-      ctx.fillStyle="rgba(125,211,252,0.35)"; ctx.fill();
-      ctx.strokeStyle="#7dd3fc"; ctx.lineWidth=2; ctx.stroke();
-    }
-    if (e.viscousStacks>0) {
-      ctx.beginPath(); ctx.ellipse(0,-14,20+e.viscousStacks*2,22+e.viscousStacks*2,0,0,Math.PI*2);
-      ctx.fillStyle=`rgba(163,230,53,${e.viscousStacks*0.08})`; ctx.fill();
-    }
-    ctx.beginPath(); ctx.ellipse(0,-20,28+Math.sin(tick*0.08)*4,22+Math.sin(tick*0.08)*3,0,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(220,38,38,${0.25+0.15*Math.sin(tick*0.07)})`; ctx.lineWidth=3; ctx.stroke();
-  } else {
-    const sway=Math.sin(wc*0.5)*4;
-    if (!flash) {
-      for (let i=0;i<4;i++) {
-        const ta=(i/4)*Math.PI*2+tick*0.06;
-        const tx2=Math.cos(ta)*(12+Math.sin(tick*0.05+i)*4);
-        const ty2=Math.sin(ta)*(7+Math.sin(tick*0.05+i)*3);
-        ctx.beginPath(); ctx.moveTo(0,-14);
-        ctx.quadraticCurveTo(tx2*0.5,-14+ty2*0.5,tx2,-10+ty2);
-        ctx.strokeStyle=`rgba(109,40,217,${0.4+0.2*Math.sin(tick*0.07+i)})`;
-        ctx.lineWidth=3; ctx.lineCap="round"; ctx.stroke();
-      }
-    }
-    ctx.beginPath(); ctx.moveTo(0,-28+sway);
+  if (e.type==="curse") {
+    const sway = Math.sin(tick*0.06+e.id)*2;
+    // Тело духа — медуза-образное
+    ctx.beginPath();
     for (let i=0;i<=8;i++) {
       const a=(i/8)*Math.PI*2;
-      const br=14+Math.sin(tick*0.07+i*1.4)*4;
-      if (i===0) { ctx.moveTo(Math.cos(a)*br,Math.sin(a)*br-14+sway); }
-      else { ctx.lineTo(Math.cos(a)*br,Math.sin(a)*br-14+sway); }
+      const r=12+Math.sin(tick*0.07+i*1.4)*3;
+      if (i===0) ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r-12+sway);
+      else ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r-12+sway);
     }
     ctx.closePath();
-    ctx.fillStyle=flash?"#fff":(e.frozen?"#bfdbfe":"#2d1b69"); ctx.fill();
-    ctx.strokeStyle=flash?"#c4b5fd":"#5b21b6"; ctx.lineWidth=1.5; ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(0,-16+sway,7,5,0,0,Math.PI*2);
-    ctx.fillStyle=flash?"#fbbf24":"#a78bfa"; ctx.fill();
-    ctx.beginPath(); ctx.ellipse(0,-16+sway,3,4,0,0,Math.PI*2);
-    ctx.fillStyle="#000"; ctx.fill();
-    ctx.beginPath(); ctx.arc(-2,-18+sway,1.5,0,Math.PI*2);
-    ctx.fillStyle="#fff"; ctx.fill();
+    ctx.fillStyle = flash?"#fff":(e.frozen?"#bfdbfe":"#2d1b69"); ctx.fill();
+    ctx.strokeStyle = flash?"#c4b5fd":"#5b21b6"; ctx.lineWidth=1.5; ctx.stroke();
+    // Лицо
+    ctx.fillStyle = flash?"#fbbf24":"#a78bfa";
+    ctx.fillRect(-4,-17+sway,3,3); ctx.fillRect(2,-17+sway,3,3); // глаза
+    ctx.beginPath(); ctx.arc(0,-13+sway,3,0.2,Math.PI-0.2); ctx.strokeStyle=flash?"#fbbf24":"#7c3aed"; ctx.lineWidth=1; ctx.stroke();
+    // Щупальца
+    for (let i=0;i<4;i++) {
+      const tx=(-6+i*4);
+      ctx.strokeStyle=flash?"#fff":"#4c1d95"; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.moveTo(tx,-4+sway);
+      ctx.quadraticCurveTo(tx+(i%2?2:-2),4+sway,tx+(i%2?-2:2),10+sway); ctx.stroke();
+    }
     if (e.frozen) {
-      ctx.beginPath(); ctx.ellipse(0,-14+sway,16,12,0,0,Math.PI*2);
-      ctx.fillStyle="rgba(125,211,252,0.4)";
-      ctx.beginPath(); ctx.ellipse(0,-14+sway,16,12,0,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0,-12+sway,16,12,0,0,Math.PI*2);
+      ctx.fillStyle="rgba(125,211,252,0.3)"; ctx.fill();
+    }
+  } else {
+    // Особый дух — крупнее, угловатый
+    const sway = Math.sin(tick*0.04+e.id)*1.5;
+    ctx.fillStyle = flash?"#fff":"#1a0a2e";
+    ctx.fillRect(-18,-32+sway,36,32);
+    ctx.strokeStyle = flash?"#f87171":"#7c2d12"; ctx.lineWidth=2; ctx.strokeRect(-18,-32+sway,36,32);
+    // Узоры на теле
+    ctx.strokeStyle = flash?"#fbbf24":`rgba(239,68,68,${0.3+0.2*Math.sin(tick*0.08)})`; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-14,-28+sway); ctx.lineTo(0,-16+sway); ctx.lineTo(14,-28+sway); ctx.stroke();
+    // Глаза — два прямоугольника
+    ctx.fillStyle = flash?"#1a0a2e":"#ef4444";
+    ctx.fillRect(-12,-26+sway,7,6); ctx.fillRect(5,-26+sway,7,6);
+    ctx.fillStyle="#000";
+    ctx.fillRect(-10,-25+sway,3,4); ctx.fillRect(7,-25+sway,3,4);
+    // Рот
+    ctx.fillStyle="#dc2626";
+    ctx.fillRect(-10,-14+sway,20,4);
+    for (let i=0;i<4;i++) {
+      ctx.fillStyle="#1a0a2e";
+      ctx.fillRect(-8+i*5,-14+sway,3,4);
+    }
+    if (e.frozen) {
+      ctx.fillStyle="rgba(125,211,252,0.3)";
+      ctx.fillRect(-20,-34+sway,40,36);
     }
   }
 
   ctx.restore();
 
-  // HP бар
-  const bw=e.type==="special"?50:36;
-  const hby=sy-(e.type==="special"?68:48), hbx=sx-bw/2;
-  ctx.fillStyle="rgba(0,0,0,0.65)"; ctx.fillRect(hbx-1,hby-1,bw+2,7);
+  // HP-бар
+  const bw = e.type==="special"?50:36;
+  const hby = sy-(e.type==="special"?65:46), hbx=sx-bw/2;
+  ctx.fillStyle="rgba(0,0,0,0.7)"; ctx.fillRect(hbx-1,hby-1,bw+2,7);
   ctx.fillStyle="#ef4444"; ctx.fillRect(hbx,hby,bw,5);
   ctx.fillStyle="#22c55e"; ctx.fillRect(hbx,hby,bw*(e.hp/e.maxHp),5);
   if (e.frozen) { ctx.fillStyle="#7dd3fc"; ctx.font="9px monospace"; ctx.fillText("❄",hbx+bw+3,hby+5); }
-  if (e.viscousStacks>=4) { ctx.fillStyle="#a3e635"; ctx.font="9px monospace"; ctx.fillText("◉",hbx+bw+(e.frozen?14:3),hby+5); }
 };
 
 const drawParticle = (ctx: CanvasRenderingContext2D, pt: Particle, camX: number, camY: number) => {
   const { sx, sy } = toScreen(pt.x,pt.y,camX,camY);
-  const a=pt.life/pt.maxLife;
-  ctx.globalAlpha=a;
+  const a = pt.life/pt.maxLife;
+  ctx.globalAlpha = a;
   if (pt.shape==="ring") {
     ctx.beginPath(); ctx.arc(sx,sy,pt.size*(1.5-a),0,Math.PI*2);
     ctx.strokeStyle=pt.color; ctx.lineWidth=2; ctx.stroke();
@@ -447,8 +411,7 @@ const drawParticle = (ctx: CanvasRenderingContext2D, pt: Particle, camX: number,
     ctx.strokeStyle=pt.color; ctx.lineWidth=pt.size*0.5; ctx.lineCap="round";
     ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(tx,ty); ctx.stroke();
   } else {
-    ctx.fillStyle=pt.color;
-    ctx.beginPath(); ctx.arc(sx,sy,pt.size*a+0.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle=pt.color; ctx.beginPath(); ctx.arc(sx,sy,pt.size*a+0.5,0,Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha=1;
 };
@@ -456,8 +419,10 @@ const drawParticle = (ctx: CanvasRenderingContext2D, pt: Particle, camX: number,
 const drawHUD = (
   ctx: CanvasRenderingContext2D, p: Player,
   energyColor: string, energyNameRu: string, kanji: string,
-  unlockedTechniques: string[], specialTimer: number
+  specialTimer: number, enemiesAlive: number, totalEnemies: number,
+  tick: number
 ) => {
+  // HP
   ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(12,12,180,22);
   const hpPct=p.hp/p.maxHp;
   ctx.fillStyle=hpPct>0.6?"#22c55e":hpPct>0.3?"#f59e0b":"#ef4444";
@@ -466,6 +431,7 @@ const drawHUD = (
   ctx.fillStyle="#f1f5f9"; ctx.font="bold 11px monospace";
   ctx.fillText(`HP  ${p.hp} / ${p.maxHp}`,18,26);
 
+  // CE
   ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(12,40,180,14);
   const cePct=p.ce/p.maxCe;
   ctx.fillStyle=energyColor; ctx.fillRect(14,42,176*cePct,10);
@@ -473,50 +439,36 @@ const drawHUD = (
   ctx.fillStyle="#c4b5fd"; ctx.font="9px monospace";
   ctx.fillText(`CE  ${Math.floor(p.ce)}/${p.maxCe}`,16,51);
 
+  // XP
   ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(12,60,180,12);
   const xpPct=p.xp/p.xpToNext;
   ctx.fillStyle="#fbbf24"; ctx.fillRect(14,62,176*xpPct,8);
   ctx.strokeStyle="#4338ca"; ctx.strokeRect(12,60,180,12);
   ctx.fillStyle="#fde68a"; ctx.font="8px monospace";
-  ctx.fillText(`XP  ${p.xp}/${p.xpToNext}  ·  Ур.${p.level}`,16,70);
+  ctx.fillText(`XP  ${p.xp}/${p.xpToNext}  Ур.${p.level}`,16,70);
 
+  // Энергия
   ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(12,78,180,20);
   ctx.strokeStyle=energyColor+"55"; ctx.strokeRect(12,78,180,20);
   ctx.fillStyle=energyColor; ctx.font="bold 11px monospace";
   ctx.fillText(`${kanji}  ${energyNameRu}`,18,92);
 
-  let bonusY=107;
-  if (p.smolderingBonus>0) {
-    ctx.fillStyle="rgba(251,146,60,0.9)"; ctx.font="10px monospace";
-    ctx.fillText(`🔥 +${Math.floor(p.smolderingBonus*100)}%`,18,bonusY); bonusY+=14;
+  // Счётчик врагов сверху по центру
+  const alive = enemiesAlive;
+  const pulse = 0.7+0.3*Math.sin(tick*0.1);
+  const counterColor = alive===0?"#22c55e":"#f87171";
+  ctx.fillStyle="rgba(0,0,0,0.75)"; ctx.fillRect(W/2-70,8,140,24);
+  ctx.strokeStyle=`${counterColor}88`; ctx.lineWidth=1; ctx.strokeRect(W/2-70,8,140,24);
+  ctx.fillStyle=alive===0?`rgba(34,197,94,${pulse})`:counterColor;
+  ctx.font="bold 12px monospace"; ctx.textAlign="center";
+  if (alive===0) {
+    ctx.fillText("✓ ВСЕ ДУХИ УСТРАНЕНЫ",W/2,24);
+  } else {
+    ctx.fillText(`Духи: ${alive} / ${totalEnemies}`,W/2,24);
   }
-  if (p.resonantBonus>0) {
-    ctx.fillStyle="rgba(192,132,252,0.9)"; ctx.font="10px monospace";
-    ctx.fillText(`⚡ Резонанс +${Math.floor(p.resonantBonus*100)}%`,18,bonusY);
-  }
+  ctx.textAlign="left";
 
-  // Слоты техник
-  const techs=TECHNIQUES.filter(t=>unlockedTechniques.includes(t.id));
-  techs.slice(0,4).forEach((tech,i)=>{
-    const bx=12+i*52, by=H-56;
-    const isSpecialSlot=tech.id!=="basic_strike";
-    ctx.fillStyle="rgba(0,0,0,0.8)"; ctx.fillRect(bx,by,44,44);
-    ctx.strokeStyle=isSpecialSlot?"#7c3aed":"#4338ca";
-    ctx.lineWidth=1; ctx.strokeRect(bx,by,44,44);
-    ctx.fillStyle="#c4b5fd"; ctx.font="bold 10px monospace";
-    ctx.fillText(tech.id==="basic_strike"?"Z / X":"E",bx+5,by+15);
-    ctx.fillStyle="#6d28d9"; ctx.font="8px monospace";
-    ctx.fillText(tech.nameRu.split(" ")[0],bx+3,by+27);
-    if (isSpecialSlot&&specialTimer>0) {
-      const cdPct=specialTimer/SPECIAL_COOLDOWN;
-      ctx.fillStyle="rgba(0,0,0,0.65)";
-      ctx.fillRect(bx,by,44,44*cdPct);
-      ctx.fillStyle="#a78bfa"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
-      ctx.fillText(`${Math.ceil(specialTimer/60)}s`,bx+22,by+38);
-      ctx.textAlign="left";
-    }
-  });
-
+  // XP-гейн флоат
   if (p.xpGainTimer>0&&p.xpGain>0) {
     const a=Math.min(1,p.xpGainTimer/20);
     ctx.globalAlpha=a;
@@ -525,20 +477,31 @@ const drawHUD = (
     ctx.textAlign="left"; ctx.globalAlpha=1;
   }
 
-  ctx.fillStyle="rgba(0,0,0,0.5)"; ctx.fillRect(W/2-190,H-28,380,20);
-  ctx.fillStyle="#475569"; ctx.font="9px monospace"; ctx.textAlign="center";
-  ctx.fillText("WASD / ↑↓←→  Движение    Z/X  Удар    E  Техника (если разблокирована)",W/2,H-13);
-  ctx.textAlign="left";
+  // Слот техники
+  const bx=12, by=H-52;
+  ctx.fillStyle="rgba(0,0,0,0.8)"; ctx.fillRect(bx,by,44,44);
+  ctx.strokeStyle=specialTimer>0?"#4338ca":"#7c3aed"; ctx.lineWidth=1; ctx.strokeRect(bx,by,44,44);
+  ctx.fillStyle="#c4b5fd"; ctx.font="bold 10px monospace";
+  ctx.fillText("E",bx+5,by+14);
+  ctx.fillStyle="#6d28d9"; ctx.font="8px monospace";
+  ctx.fillText("Техника",bx+3,by+26);
+  if (specialTimer>0) {
+    const cdPct=specialTimer/SPECIAL_COOLDOWN;
+    ctx.fillStyle="rgba(0,0,0,0.65)"; ctx.fillRect(bx,by,44,44*cdPct);
+    ctx.fillStyle="#a78bfa"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
+    ctx.fillText(`${Math.ceil(specialTimer/60)}s`,bx+22,by+38); ctx.textAlign="left";
+  }
 };
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Компонент ─────────────────────────────────────────────────────────────────
 
-const GameScreen = ({ energy, progress, onGameOver }: Props) => {
+const GameScreen = ({ energy, progress, onGameOver, onVictory }: Props) => {
   const energyDef = getEnergyDef(energy);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<GameData | null>(null);
   const animRef = useRef<number>(0);
   const progressRef = useRef<CharacterProgress>({ ...progress });
+  const bindings = useRef(loadBindings());
 
   const addParticle = (g: GameData, x: number, y: number, color: string, count=5, shape: Particle["shape"]="circle") => {
     for (let i=0;i<count;i++) {
@@ -559,10 +522,6 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       p.maxHp=Math.floor(8*energyDef.statMods.defense+(p.level-1));
       p.hp=Math.min(p.hp+2,p.maxHp);
       p.maxCe=100+(p.level-1)*10;
-      if (p.level>=3&&!progressRef.current.unlockedTechniques.includes("cursed_burst"))
-        progressRef.current.unlockedTechniques.push("cursed_burst");
-      if (p.level>=5&&!progressRef.current.unlockedTechniques.includes("cursed_dash"))
-        progressRef.current.unlockedTechniques.push("cursed_dash");
     }
     progressRef.current.level=p.level;
     progressRef.current.xp=p.xp;
@@ -577,27 +536,24 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       attackTimer:0,invincible:0,
       facing:{x:1,y:0},
       attacking:false,attackAnim:0,
-      ce:100,maxCe:100,
-      specialTimer:0,
-      walkCycle:0,
-      combo:0,comboTimer:0,
-      smolderingBonus:0,smolderingTimer:0,
-      resonantBonus:0,
-      hitsUntilPierce:3,
+      attackKeyHeld:false,
+      ce:100,maxCe:100,specialTimer:0,walkCycle:0,
       chargeTimer:0,chargeReady:false,
       level:progress.level,xp:progress.xp,xpToNext:progress.xpToNext,
       xpGain:0,xpGainTimer:0,
+      comboCount:0,
     };
     gameRef.current={
       player,enemies:spawnEnemies(),obstacles:createObstacles(),
       particles:[],floatTexts:[],
       camX:120,camY:120,
-      keys:new Set(),tick:0,running:true,
+      keys:new Set(),prevKeys:new Set(),tick:0,running:true,won:false,
     };
   }, [energyDef.statMods, progress]);
 
   useEffect(() => {
     initGame();
+    bindings.current = loadBindings();
     const canvas=canvasRef.current;
     if (!canvas) return;
     const ctx=canvas.getContext("2d");
@@ -606,8 +562,7 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
     const onKey=(e: KeyboardEvent, down: boolean)=>{
       const g=gameRef.current; if (!g) return;
       if (down) g.keys.add(e.code); else g.keys.delete(e.code);
-      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code))
-        e.preventDefault();
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
     };
     const kd=(e:KeyboardEvent)=>onKey(e,true);
     const ku=(e:KeyboardEvent)=>onKey(e,false);
@@ -617,6 +572,7 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
     const emod=energyDef.statMods;
     const SPEED=emod.speed*2.8;
     const pr=12;
+    const b=bindings.current;
 
     const gameLoop=()=>{
       const g=gameRef.current;
@@ -624,31 +580,23 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       g.tick++;
       const { player:p, enemies, obstacles, keys }=g;
 
-      // ── Прямое управление (нажал влево = идёшь влево) ──────────────────────
+      // Движение
       let mvx=0, mvy=0;
-      if (keys.has("ArrowLeft")||keys.has("KeyA"))  mvx-=1;
-      if (keys.has("ArrowRight")||keys.has("KeyD")) mvx+=1;
-      if (keys.has("ArrowUp")||keys.has("KeyW"))    mvy-=1;
-      if (keys.has("ArrowDown")||keys.has("KeyS"))  mvy+=1;
+      if (keys.has(b.left)||keys.has("ArrowLeft"))  mvx-=1;
+      if (keys.has(b.right)||keys.has("ArrowRight")) mvx+=1;
+      if (keys.has(b.up)||keys.has("ArrowUp"))       mvy-=1;
+      if (keys.has(b.down)||keys.has("ArrowDown"))   mvy+=1;
 
       if (mvx!==0||mvy!==0) {
         const len=Math.sqrt(mvx*mvx+mvy*mvy);
         p.vx=(mvx/len)*SPEED; p.vy=(mvy/len)*SPEED;
         p.facing={ x:mvx/len, y:mvy/len };
         p.walkCycle+=0.18;
-        if (energy==="smoldering") p.smolderingTimer=120;
-        if (energy==="smoldering") p.smolderingBonus=Math.min(1,p.smolderingBonus+0.0008);
       } else {
         p.vx*=0.5; p.vy*=0.5;
-        if (energy==="smoldering") p.smolderingBonus=Math.max(0,p.smolderingBonus-0.004);
       }
 
-      // Charged: hold to charge
-      if (energy==="charged"&&(keys.has("KeyZ")||keys.has("KeyX"))) {
-        p.chargeTimer++; if (p.chargeTimer>90) p.chargeReady=true;
-      }
-
-      // Move + collide
+      // Коллизии с препятствиями
       const nx=p.x+p.vx, ny=p.y+p.vy;
       let bx=false,by=false;
       obstacles.forEach(o=>{
@@ -659,20 +607,33 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       p.x=Math.max(pr,Math.min(WORLD_W-pr,p.x));
       p.y=Math.max(pr,Math.min(WORLD_H-pr,p.y));
 
-      // ── Атака ──────────────────────────────────────────────────────────────
-      const atkKey=keys.has("KeyZ")||keys.has("KeyX");
-      const chargedRelease=energy==="charged"&&!atkKey&&p.chargeTimer>0&&p.chargeTimer<90;
-      const chargedStrike=energy==="charged"&&!atkKey&&p.chargeReady;
-      const normalAtk=atkKey&&energy!=="charged"&&p.attackTimer<=0;
+      // ── Атака — антиспам: нужно отпустить кнопку между ударами ──
+      const atkKeyDown = keys.has(b.attack)||keys.has(b.attack2);
+
+      // Charged energy: держим накапливаем
+      if (energy==="max"&&atkKeyDown) {
+        p.chargeTimer++; if (p.chargeTimer>90) p.chargeReady=true;
+      }
+
+      // Кнопка была отпущена — сбрасываем held
+      if (!atkKeyDown) {
+        p.attackKeyHeld = false;
+      }
+
+      const canAtk = !p.attackKeyHeld && p.attackTimer<=0;
+      const chargedRelease = energy==="max"&&!atkKeyDown&&p.chargeTimer>0&&p.chargeTimer<90;
+      const chargedStrike  = energy==="max"&&!atkKeyDown&&p.chargeReady;
+      const normalAtk = atkKeyDown && energy!=="max" && canAtk;
 
       if (normalAtk||chargedRelease||chargedStrike) {
-        const isCharged=chargedStrike;
+        const isCharged = chargedStrike;
         p.attacking=true;
-        p.attackTimer=Math.max(12,Math.floor(ATTACK_COOLDOWN/emod.attackSpeed));
+        p.attackTimer=Math.max(16,Math.floor(ATTACK_COOLDOWN_BASE/emod.attackSpeed));
         p.attackAnim=12;
-        if (energy==="charged") { p.chargeTimer=0; p.chargeReady=false; }
-        if (energy==="piercing") { p.hp=Math.max(1,p.hp-1); addParticle(g,p.x,p.y,"#fca5a5",3); }
+        p.attackKeyHeld = true; // блокируем до отпускания
+        if (energy==="max") { p.chargeTimer=0; p.chargeReady=false; }
 
+        p.comboCount=(p.comboCount+1)%8;
         const nfx=p.facing.x, nfy=p.facing.y;
 
         enemies.forEach(e=>{
@@ -681,41 +642,16 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
           const dist=Math.sqrt(dx*dx+dy*dy);
           const dot=nfx*dx+nfy*dy;
           if (dist<ATTACK_RANGE+e.maxHp&&dot>-8) {
-            let dmg=Math.max(1,Math.floor(
-              emod.damage*(isCharged?3:1)*
-              (energy==="piercing"&&p.hitsUntilPierce===3?2:1)*
-              (1+p.smolderingBonus)*(1+p.resonantBonus)
-            ));
+            let dmg=Math.max(1,Math.floor(emod.damage*(isCharged?3:1)));
 
-            if (energy==="volatile"&&Math.random()<0.25) {
-              addParticle(g,e.x,e.y,"#fb923c",14,"ring");
-              addFloat(g,e.x,e.y,"ВЗРЫВ!","#fb923c");
-              enemies.forEach(e2=>{ if (!e2.alive) return;
-                const d2x=e2.x-e.x,d2y=e2.y-e.y;
-                if (d2x*d2x+d2y*d2y<80*80) { e2.hp-=2; e2.hitFlash=8; }
-              });
-              p.hp=Math.max(1,p.hp-1);
-            }
-            if (energy==="void") { p.hp=Math.min(p.maxHp,p.hp+1); p.ce=Math.min(p.maxCe,p.ce+5); }
-            if (energy==="corrupted") {
-              if (Math.random()<0.3) { dmg*=2; addFloat(g,e.x,e.y,"КРИТ×2","#4ade80"); }
-              else if (Math.random()<0.15) { p.hp=Math.max(1,p.hp-1); addFloat(g,p.x,p.y,"ОТКАТ","#ef4444"); }
-            }
+            // Энергии — бонусы
+            if (energy==="dismantle"&&Math.random()<0.3) { dmg*=2; addFloat(g,e.x,e.y,"×2","#f87171"); }
+            if (energy==="cleave") dmg=Math.floor(dmg*(1+(e.hp/e.maxHp)*0.6));
+            if (energy==="ratio"&&p.comboCount===6) { dmg=Math.floor(dmg*1.8); addFloat(g,e.x,e.y,"7:3!","#fbbf24"); }
+            if (energy==="puppet") dmg=Math.floor(dmg*1.4);
 
-            e.hp-=dmg; e.hitFlash=10; e.vx=nfx*4; e.vy=nfy*4;
-
-            if (energy==="viscous") {
-              e.viscousStacks=Math.min(6,e.viscousStacks+1); e.viscousTimer=180; e.slowTimer=60;
-              if (e.viscousStacks>=4) addFloat(g,e.x,e.y,"ПРИЛИПАНИЕ","#a3e635");
-            }
-            if (energy==="frigid") {
-              e.freezeStacks=Math.min(6,e.freezeStacks+1); e.freezeTimer=180;
-              if (e.freezeStacks>=5&&!e.frozen) {
-                e.frozen=true; e.frozenTimer=120; e.freezeStacks=0;
-                addFloat(g,e.x,e.y,"ЗАМОРОЖЕН","#7dd3fc");
-              }
-            }
-            if (energy==="radiant") addParticle(g,e.x,e.y,"#fde68a",6,"ring");
+            e.hp-=dmg; e.hitFlash=10;
+            e.vx=nfx*4; e.vy=nfy*4;
 
             addParticle(g,e.x,e.y,energyDef.color,5,"spark");
             addFloat(g,e.x,e.y,`-${dmg}`,energyDef.color);
@@ -729,8 +665,6 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
             }
           }
         });
-
-        if (energy==="piercing") { p.hitsUntilPierce--; if (p.hitsUntilPierce<=0) p.hitsUntilPierce=3; }
       }
 
       if (p.attackTimer>0) p.attackTimer--;
@@ -741,53 +675,33 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       if (p.xpGainTimer>0) p.xpGainTimer--;
       p.ce=Math.min(p.maxCe,p.ce+emod.energyRegen*0.15);
 
-      // ── Техника (E) ────────────────────────────────────────────────────────
-      if (keys.has("KeyE")&&p.specialTimer<=0&&p.ce>=30&&progressRef.current.unlockedTechniques.includes("cursed_burst")) {
+      // Техника E
+      if ((keys.has(b.technique)||keys.has(b.technique2))&&p.specialTimer<=0&&p.ce>=30) {
         p.ce-=30; p.specialTimer=SPECIAL_COOLDOWN;
-        if (energy==="warped") {
-          let nearest: Enemy|null=null, nd=9999;
-          enemies.forEach(e=>{ if (!e.alive) return;
-            const dx=e.x-p.x,dy=e.y-p.y,d=Math.sqrt(dx*dx+dy*dy);
-            if (d<nd) { nd=d; nearest=e; }
-          });
-          if (nearest) {
-            const ne=nearest as Enemy;
-            p.x=ne.x-p.facing.x*25; p.y=ne.y-p.facing.y*25;
-            addParticle(g,p.x,p.y,energyDef.color,18,"ring");
-            ne.hp-=4; ne.hitFlash=15;
-            if (ne.hp<=0) { ne.alive=false; gainXp(g,80); addParticle(g,ne.x,ne.y,"#fbbf24",16); }
+        enemies.forEach(e=>{ if (!e.alive) return;
+          const dx=e.x-p.x,dy=e.y-p.y;
+          if (dx*dx+dy*dy<110*110) {
+            const dmg=Math.floor(3*emod.damage);
+            e.hp-=dmg; e.hitFlash=18; e.vx=dx*0.08; e.vy=dy*0.08;
+            addParticle(g,e.x,e.y,energyDef.color,10,"spark");
+            if (e.hp<=0) { e.alive=false; gainXp(g,80); addParticle(g,e.x,e.y,"#fbbf24",18); }
           }
-        } else {
-          enemies.forEach(e=>{ if (!e.alive) return;
-            const dx=e.x-p.x,dy=e.y-p.y;
-            if (dx*dx+dy*dy<110*110) {
-              const dmg=Math.floor(3*emod.damage*(1+p.smolderingBonus));
-              e.hp-=dmg; e.hitFlash=18; e.vx=dx*0.08; e.vy=dy*0.08;
-              addParticle(g,e.x,e.y,energyDef.color,10,"spark");
-              if (e.hp<=0) { e.alive=false; gainXp(g,80); addParticle(g,e.x,e.y,"#fbbf24",18); }
-            }
-          });
-          for (let i=0;i<24;i++) {
-            const a=(i/24)*Math.PI*2;
-            g.particles.push({ x:p.x+Math.cos(a)*8,y:p.y+Math.sin(a)*8,
-              vx:Math.cos(a)*9,vy:Math.sin(a)*9,life:35,maxLife:35,color:energyDef.color,size:5,shape:"spark" });
-          }
+        });
+        for (let i=0;i<20;i++) {
+          const a=(i/20)*Math.PI*2;
+          g.particles.push({ x:p.x+Math.cos(a)*8,y:p.y+Math.sin(a)*8,
+            vx:Math.cos(a)*9,vy:Math.sin(a)*9,life:35,maxLife:35,color:energyDef.color,size:5,shape:"spark" });
         }
       }
 
-      // ── AI врагов ──────────────────────────────────────────────────────────
+      // AI врагов
       enemies.forEach(e=>{
         if (!e.alive) return;
         e.aiTimer++; e.walkCycle+=0.12;
         if (e.frozen) { if (--e.frozenTimer<=0) e.frozen=false; e.vx*=0.1; e.vy*=0.1; }
-        if (e.viscousTimer>0) e.viscousTimer--; else e.viscousStacks=Math.max(0,e.viscousStacks-1);
-        if (e.freezeTimer>0) e.freezeTimer--; else e.freezeStacks=Math.max(0,e.freezeStacks-1);
         if (e.slowTimer>0) e.slowTimer--;
-
         const dx=p.x-e.x,dy=p.y-e.y,dist=Math.sqrt(dx*dx+dy*dy);
-        const slow=e.slowTimer>0?0.4:e.viscousStacks>0?(1-e.viscousStacks*0.12):1;
-        const spd=(e.type==="special"?1.2:1.6)*slow;
-
+        const spd=(e.type==="special"?1.2:1.6)*(e.slowTimer>0?0.4:1);
         if (!e.frozen&&dist>0&&dist<380) {
           e.vx+=(dx/dist)*spd*0.28; e.vy+=(dy/dist)*spd*0.28;
           const s=Math.sqrt(e.vx*e.vx+e.vy*e.vy);
@@ -797,36 +711,27 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
           e.vx=(Math.random()-0.5)*1.4; e.vy=(Math.random()-0.5)*1.4;
         }
         e.vx*=0.82; e.vy*=0.82;
-
-        const er=e.type==="special"?18:12;
-        const enx=e.x+e.vx,eny=e.y+e.vy;
-        let ebx=false,eby=false;
+        // Коллизии врагов с препятствиями
+        const enx=e.x+e.vx, eny=e.y+e.vy;
+        let ex=false,ey=false;
         obstacles.forEach(o=>{
-          if (circleRect(enx,e.y,er,o.x,o.y,o.w,o.h)) ebx=true;
-          if (circleRect(e.x,eny,er,o.x,o.y,o.w,o.h)) eby=true;
+          if (circleRect(enx,e.y,10,o.x,o.y,o.w,o.h)) ex=true;
+          if (circleRect(e.x,eny,10,o.x,o.y,o.w,o.h)) ey=true;
         });
-        if (!ebx) e.x=enx; if (!eby) e.y=eny;
-        e.x=Math.max(er,Math.min(WORLD_W-er,e.x));
-        e.y=Math.max(er,Math.min(WORLD_H-er,e.y));
+        if (!ex) e.x=enx; if (!ey) e.y=eny;
+        e.x=Math.max(10,Math.min(WORLD_W-10,e.x)); e.y=Math.max(10,Math.min(WORLD_H-10,e.y));
         if (e.hitFlash>0) e.hitFlash--;
-
-        if (p.invincible<=0&&dist<pr+er+2) {
-          if (energy==="resonant") {
-            p.resonantBonus=Math.min(0.9,p.resonantBonus+0.15);
-            addFloat(g,p.x,p.y,"РЕЗОНАНС!","#c084fc");
-          }
-          const blocked=energy==="dense"&&Math.random()<0.4;
-          if (!blocked) {
+        // Атака врагов по игроку
+        if (dist<38&&p.invincible===0) {
+          if (energy==="infinity"&&p.ce>5&&Math.random()<0.8) {
+            p.ce-=5;
+          } else {
             p.hp--; p.invincible=65; addParticle(g,p.x,p.y,"#dc2626",8);
             if (p.hp<=0) {
               g.running=false;
-              progressRef.current.level=p.level;
-              progressRef.current.xp=p.xp;
-              progressRef.current.xpToNext=p.xpToNext;
+              progressRef.current.level=p.level; progressRef.current.xp=p.xp; progressRef.current.xpToNext=p.xpToNext;
               onGameOver({...progressRef.current});
             }
-          } else {
-            p.invincible=20; addFloat(g,p.x,p.y,"БЛОК","#94a3b8");
           }
         }
       });
@@ -834,21 +739,31 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
       g.particles=g.particles.filter(pt=>{ pt.x+=pt.vx; pt.y+=pt.vy; pt.vx*=0.88; pt.vy*=0.88; return --pt.life>0; });
       g.floatTexts=g.floatTexts.filter(ft=>{ ft.y+=ft.vy; return --ft.life>0; });
 
-      g.camX+=(p.x-g.camX)*CAMERA_LERP;
-      g.camY+=(p.y-g.camY)*CAMERA_LERP;
-      g.camX=Math.max(0,Math.min(WORLD_W,g.camX));
-      g.camY=Math.max(0,Math.min(WORLD_H,g.camY));
+      g.camX+=(p.x-g.camX)*CAMERA_LERP; g.camY+=(p.y-g.camY)*CAMERA_LERP;
+      g.camX=Math.max(0,Math.min(WORLD_W,g.camX)); g.camY=Math.max(0,Math.min(WORLD_H,g.camY));
 
-      // ── Рендер ─────────────────────────────────────────────────────────────
+      // Проверка победы
+      const alive=enemies.filter(e=>e.alive).length;
+      if (alive===0 && !g.won) {
+        g.won=true;
+        // Финальный взрыв частиц
+        for (let i=0;i<30;i++) addParticle(g,p.x,p.y,energyDef.color,1,"ring");
+        // Через 1.5 сек — победа
+        setTimeout(()=>{
+          progressRef.current.level=p.level; progressRef.current.xp=p.xp; progressRef.current.xpToNext=p.xpToNext;
+          onVictory({...progressRef.current});
+        },1800);
+      }
+
+      // Рендер
       drawFloor(ctx,g.camX,g.camY,g.tick);
       g.particles.forEach(pt=>drawParticle(ctx,pt,g.camX,g.camY));
 
-      // Depth sort: рисуем объекты по Y (дальние сначала — у них меньше Y)
       const dl: {y:number;draw:()=>void}[]=[];
       g.obstacles.forEach(o=>dl.push({y:o.y+o.h,draw:()=>drawObstacle(ctx,o,g.camX,g.camY)}));
       enemies.forEach(e=>{ if (e.alive) dl.push({y:e.y,draw:()=>drawEnemy(ctx,e,g.camX,g.camY,g.tick)}); });
       dl.push({y:p.y,draw:()=>drawPlayer(ctx,p,g.tick,g.camX,g.camY,energyDef.color,energyDef.glowColor)});
-      dl.sort((a,b)=>a.y-b.y);
+      dl.sort((a,b2)=>a.y-b2.y);
       dl.forEach(d=>d.draw());
 
       g.floatTexts.forEach(ft=>{
@@ -859,13 +774,13 @@ const GameScreen = ({ energy, progress, onGameOver }: Props) => {
         ctx.textAlign="left"; ctx.globalAlpha=1;
       });
 
-      drawHUD(ctx,p,energyDef.color,energyDef.nameRu,energyDef.kanji,progressRef.current.unlockedTechniques,p.specialTimer);
+      drawHUD(ctx,p,energyDef.color,energyDef.nameRu,energyDef.kanji,p.specialTimer,alive,enemies.length,g.tick);
       animRef.current=requestAnimationFrame(gameLoop);
     };
 
     animRef.current=requestAnimationFrame(gameLoop);
     return ()=>{ cancelAnimationFrame(animRef.current); window.removeEventListener("keydown",kd); window.removeEventListener("keyup",ku); };
-  },[initGame,onGameOver,energy,energyDef,gainXp]);
+  },[initGame,onGameOver,onVictory,energy,energyDef,gainXp]);
 
   return (
     <canvas ref={canvasRef} width={W} height={H}
