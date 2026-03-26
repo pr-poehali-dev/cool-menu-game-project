@@ -204,6 +204,8 @@ const Index = () => {
   };
 
   const handleReturnToCity = () => {
+    // При возврате из победы — берём finalProgress (с обновлённым квестом)
+    if (finalProgress) setProgress(finalProgress);
     setScreen("city");
   };
 

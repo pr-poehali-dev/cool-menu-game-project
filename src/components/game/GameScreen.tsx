@@ -294,51 +294,134 @@ const drawPlayer = (
   ctx.restore();
 };
 
-// ── Враг ─────────────────────────────────────────────────────────────────────
+// ── Враг — гуманоидный проклятый дух ─────────────────────────────────────────
 const drawEnemy = (ctx: CanvasRenderingContext2D, e: Enemy, camX: number, camY: number, tick: number) => {
   if (!e.alive) return;
   const { sx, sy } = toScreen(e.x, e.y, camX, camY);
   if (sx<-80||sx>W+80||sy<-150||sy>H+80) return;
-  const flash = e.hitFlash>0;
-  ctx.save(); ctx.translate(Math.round(sx), Math.round(sy));
+  const flash = e.hitFlash > 0;
+  const isSpecial = e.type === "special";
+
+  ctx.save();
+  ctx.translate(Math.round(sx), Math.round(sy));
   ctx.imageSmoothingEnabled = false;
 
-  if (e.type==="curse") {
-    const sway = Math.sin(tick*0.06+e.id)*2;
-    ctx.beginPath();
-    for (let i=0;i<=8;i++) {
-      const a=(i/8)*Math.PI*2;
-      const r=12+Math.sin(tick*0.07+i*1.4)*3;
-      if (i===0) ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r-12+sway);
-      else ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r-12+sway);
-    }
-    ctx.closePath();
-    ctx.fillStyle = flash?"#fff":(e.frozen?"#bfdbfe":"#2d1b69"); ctx.fill();
-    ctx.strokeStyle = flash?"#c4b5fd":"#5b21b6"; ctx.lineWidth=1.5; ctx.stroke();
-    ctx.fillStyle = flash?"#fbbf24":"#a78bfa";
-    ctx.fillRect(-4,-17+sway,3,3); ctx.fillRect(2,-17+sway,3,3);
-    ctx.beginPath(); ctx.arc(0,-13+sway,3,0.2,Math.PI-0.2); ctx.strokeStyle=flash?"#fbbf24":"#7c3aed"; ctx.lineWidth=1; ctx.stroke();
-    for (let i=0;i<4;i++) {
-      const tx=(-6+i*4);
-      ctx.strokeStyle=flash?"#fff":"#4c1d95"; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.moveTo(tx,-4+sway);
-      ctx.quadraticCurveTo(tx+(i%2?2:-2),4+sway,tx+(i%2?-2:2),10+sway); ctx.stroke();
-    }
-  } else {
-    const sway = Math.sin(tick*0.04+e.id)*1.5;
-    ctx.fillStyle = flash?"#fff":"#1a0a2e";
-    ctx.fillRect(-18,-32+sway,36,32);
-    ctx.strokeStyle = flash?"#f87171":"#7c2d12"; ctx.lineWidth=2; ctx.strokeRect(-18,-32+sway,36,32);
-    ctx.strokeStyle = flash?"#fbbf24":`rgba(239,68,68,${0.3+0.2*Math.sin(tick*0.08)})`; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(-14,-28+sway); ctx.lineTo(0,-16+sway); ctx.lineTo(14,-28+sway); ctx.stroke();
-    ctx.fillStyle = flash?"#1a0a2e":"#ef4444";
-    ctx.fillRect(-12,-26+sway,7,6); ctx.fillRect(5,-26+sway,7,6);
-    ctx.fillStyle="#000";
-    ctx.fillRect(-10,-25+sway,3,4); ctx.fillRect(7,-25+sway,3,4);
-    ctx.fillStyle="#dc2626";
-    ctx.fillRect(-10,-14+sway,20,4);
-    for (let i=0;i<4;i++) { ctx.fillStyle="#1a0a2e"; ctx.fillRect(-8+i*5,-14+sway,3,4); }
+  const scale = isSpecial ? 1.35 : 1.0;
+  ctx.scale(scale, scale);
+
+  const walkFrame = Math.floor(e.walkCycle / 5) % 4;
+  const isMoving = Math.abs(e.vx) > 0.1 || Math.abs(e.vy) > 0.1;
+  const legLdy = isMoving ? (walkFrame<2?-2:2) : 0;
+  const legRdy = isMoving ? (walkFrame<2?2:-2) : 0;
+  const armSwing = isMoving ? (walkFrame%2===0?2:-2) : 0;
+  const flip = e.facing >= 0 ? 1 : -1;
+
+  // CE-ореол вокруг духа (фиолетовый)
+  const pulse = 0.4 + 0.25 * Math.sin(tick * 0.07 + e.id);
+  if (!flash) {
+    const grad = ctx.createRadialGradient(0, -20, 4, 0, -20, isSpecial ? 30 : 22);
+    grad.addColorStop(0, `rgba(109,40,217,0)`);
+    grad.addColorStop(0.6, `rgba(109,40,217,${pulse * 0.35})`);
+    grad.addColorStop(1, `rgba(109,40,217,0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(-30, -50, 60, 60);
   }
+
+  // Тень
+  ctx.beginPath(); ctx.ellipse(0, 2, isSpecial?12:9, isSpecial?5:4, 0, 0, Math.PI*2);
+  ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fill();
+
+  const skinColor = flash ? "#fff" : (isSpecial ? "#3b0764" : "#1e1b4b");
+  const clothColor = flash ? "#eee" : (isSpecial ? "#1a0a2e" : "#1e1b4b");
+  const eyeColor = flash ? "#fbbf24" : "#a855f7";
+  const markColor = flash ? "#fbbf24" : (isSpecial ? "#ef4444" : "#7c3aed");
+
+  // ── Ноги ──
+  ctx.fillStyle = clothColor;
+  ctx.fillRect(-7, legLdy, 5, 15);
+  ctx.fillRect(2, legRdy, 5, 15);
+  // Ступни (слегка деформированные)
+  ctx.fillStyle = skinColor;
+  ctx.fillRect(-8, 14+legLdy, 7, 4);
+  ctx.fillRect(1, 14+legRdy, 7, 4);
+
+  // ── Тело ──
+  ctx.fillStyle = clothColor;
+  ctx.fillRect(-8, -20, 16, 22);
+  // Полосы/узоры CE на теле
+  ctx.strokeStyle = markColor;
+  ctx.lineWidth = 0.8;
+  ctx.setLineDash([2, 2]);
+  ctx.beginPath(); ctx.moveTo(-8,-14); ctx.lineTo(8,-14); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-4,-20); ctx.lineTo(-4,-4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(4,-20); ctx.lineTo(4,-4); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Руки ──
+  ctx.fillStyle = skinColor;
+  ctx.fillRect(flip > 0 ? -13 : 8, -18+armSwing, 5, 14);
+  ctx.fillRect(flip > 0 ? 8 : -13, -18-armSwing, 5, 14);
+  // Когти/пальцы
+  ctx.fillStyle = markColor;
+  const clawX = flip > 0 ? -13 : 8;
+  for (let c=0;c<3;c++) {
+    ctx.fillRect(clawX+c*1.5, -5+armSwing, 2, 4);
+  }
+
+  // ── Шея ──
+  ctx.fillStyle = skinColor; ctx.fillRect(-2, -25, 4, 6);
+
+  // ── Голова ──
+  ctx.fillStyle = skinColor;
+  // Слегка искажённая голова (угловатая у обычных, большая у особых)
+  if (isSpecial) {
+    ctx.fillRect(-9, -42, 18, 20);
+    // Маска / деформация
+    ctx.strokeStyle = markColor; ctx.lineWidth = 1.5;
+    ctx.strokeRect(-9, -42, 18, 20);
+    // Рога
+    ctx.fillStyle = markColor;
+    ctx.beginPath(); ctx.moveTo(-8,-42); ctx.lineTo(-6,-50); ctx.lineTo(-4,-42); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(4,-42); ctx.lineTo(6,-50); ctx.lineTo(8,-42); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillRect(-7, -38, 14, 16);
+  }
+  ctx.strokeStyle = flash ? "#f0abfc" : markColor; ctx.lineWidth = 0.8;
+  ctx.strokeRect(isSpecial?-9:-7, isSpecial?-42:-38, isSpecial?18:14, isSpecial?20:16);
+
+  // ── Глаза (CE-светящиеся) ──
+  ctx.fillStyle = eyeColor;
+  if (isSpecial) {
+    ctx.fillRect(-6, -37, 5, 4);
+    ctx.fillRect(1, -37, 5, 4);
+    // Дополнительный глаз на лбу
+    ctx.beginPath(); ctx.arc(0, -40, 2.5, 0, Math.PI*2);
+    ctx.fillStyle = flash ? "#fbbf24" : "#ef4444"; ctx.fill();
+  } else {
+    ctx.fillRect(-4, -33, 3, 3);
+    ctx.fillRect(1, -33, 3, 3);
+  }
+
+  // Свечение глаз
+  if (!flash) {
+    ctx.shadowColor = eyeColor; ctx.shadowBlur = 6;
+    ctx.fillStyle = eyeColor;
+    ctx.fillRect(isSpecial?-6:-4, isSpecial?-37:-33, isSpecial?5:3, isSpecial?4:3);
+    ctx.fillRect(isSpecial?1:-1+isSpecial?4:1, isSpecial?-37:-33, isSpecial?5:3, isSpecial?4:3);
+    ctx.shadowBlur = 0;
+  }
+
+  // ── Рот (проклятая улыбка) ──
+  ctx.strokeStyle = markColor; ctx.lineWidth = 1;
+  if (isSpecial) {
+    ctx.beginPath();
+    ctx.moveTo(-6,-29); ctx.lineTo(6,-29);
+    for (let t=0;t<4;t++) { ctx.lineTo(-5+t*3.5,-26); ctx.lineTo(-3+t*3.5,-29); }
+    ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(0,-27,3,0,Math.PI); ctx.stroke();
+  }
+
   ctx.restore();
 
   // HP-бар
@@ -661,6 +744,8 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
               gainXp(g,xpAmt);
               addParticle(g,e.x,e.y,"#fbbf24",16);
               addFloat(g,e.x,e.y,`+${xpAmt} XP`,"#fbbf24");
+              // Счётчик квеста — за каждое убийство
+              progressRef.current.questProgress = (progressRef.current.questProgress||0)+1;
             }
           }
         });
@@ -687,23 +772,38 @@ const GameScreen = ({ energy, progress, onGameOver, onVictory, onFlee }: Props) 
             const heal = Math.floor(p.maxHp * 0.25);
             p.hp = Math.min(p.maxHp, p.hp + heal);
             addFloat(g,p.x,p.y,`+${heal} HP`,"#4ade80");
-            addParticle(g,p.x,p.y,"#4ade80",12,"ring");
+            addParticle(g,p.x,p.y,"#4ade80",8,"spark");
           } else {
-            // Атакующая техника — урон по зоне
+            // Атакующая техника — удар по ближайшему врагу в конусе
+            let hit = false;
             enemies.forEach(e=>{ if (!e.alive) return;
               const dx=e.x-p.x,dy=e.y-p.y;
-              if (dx*dx+dy*dy<110*110) {
-                const dmg=Math.floor(3*emod.damage);
-                e.hp-=dmg; e.hitFlash=18; e.vx=dx*0.08; e.vy=dy*0.08;
-                addParticle(g,e.x,e.y,energyDef.color,10,"spark");
+              const dist=Math.sqrt(dx*dx+dy*dy);
+              const dot=(p.facing.x*dx+p.facing.y*dy)/Math.max(1,dist);
+              if (dist<110 && dot>-0.3) {
+                const dmg=Math.floor(2.5*emod.damage);
+                e.hp-=dmg; e.hitFlash=18; e.vx=dx*0.1; e.vy=dy*0.1;
+                addParticle(g,e.x,e.y,energyDef.color,8,"spark");
                 addFloat(g,e.x,e.y,`-${dmg}`,energyDef.color);
-                if (e.hp<=0) { e.alive=false; gainXp(g,80); addParticle(g,e.x,e.y,"#fbbf24",18); }
+                hit = true;
+                if (e.hp<=0) {
+                  e.alive=false;
+                  const xpAmt=e.type==="special"?80:30;
+                  gainXp(g,xpAmt);
+                  addParticle(g,e.x,e.y,"#fbbf24",12);
+                  // Счётчик квеста
+                  progressRef.current.questProgress = (progressRef.current.questProgress||0)+1;
+                }
               }
             });
-            for (let i=0;i<20;i++) {
-              const a=(i/20)*Math.PI*2;
-              g.particles.push({ x:p.x+Math.cos(a)*8,y:p.y+Math.sin(a)*8,
-                vx:Math.cos(a)*9,vy:Math.sin(a)*9,life:35,maxLife:35,color:energyDef.color,size:5,shape:"spark" });
+            // Визуальный эффект техники — только искры вперёд, без кольца
+            if (hit) {
+              for (let i=0;i<8;i++) {
+                const a=Math.atan2(p.facing.y,p.facing.x)+( Math.random()-0.5)*0.8;
+                g.particles.push({ x:p.x,y:p.y,
+                  vx:Math.cos(a)*10,vy:Math.sin(a)*10,
+                  life:20+Math.random()*12,maxLife:32,color:energyDef.color,size:4,shape:"spark" });
+              }
             }
           }
         }

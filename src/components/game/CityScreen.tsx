@@ -141,7 +141,8 @@ interface NPC {
 
 const NPCS: NPC[] = [
   {
-    id:"gojo", x:400, y:580, name:"Сатору Годзё", role:"Учитель высшей школы",
+    // Годзё — стоит у школы магии, не перекрывает проклятое место
+    id:"gojo", x:200, y:520, name:"Сатору Годзё", role:"Учитель высшей школы",
     color:"#60a5fa", hairColor:"#fff", bodyColor:"#1e3a5f",
     interactRadius:55,
     questName:"Урок бесконечности", questGoal:5,
@@ -152,8 +153,9 @@ const NPCS: NPC[] = [
     ],
   },
   {
-    id:"nanami", x:680, y:550, name:"Кэнто Нанами", role:"Маг класса 1",
-    color:"#fbbf24", hairColor:"#d4a574", bodyColor:"#374151",
+    // Нанами — стоит на дороге между зданиями
+    id:"nanami", x:550, y:520, name:"Кэнто Нанами", role:"Маг класса 1",
+    color:"#1e40af", hairColor:"#d4a574", bodyColor:"#374151",
     interactRadius:50,
     questName:"Принцип 7:3", questGoal:3,
     questDesc:"Уничтожь 3 духа в Проклятом месте, используя технику соотношения.",
@@ -163,7 +165,8 @@ const NPCS: NPC[] = [
     ],
   },
   {
-    id:"nobara", x:280, y:620, name:"Нобара Кугисаки", role:"Студент первого курса",
+    // Нобара — левая сторона от проклятого места
+    id:"nobara", x:520, y:860, name:"Нобара Кугисаки", role:"Студент первого курса",
     color:"#f59e0b", hairColor:"#8b4513", bodyColor:"#1f2937",
     interactRadius:50,
     questName:"Резонанс крови", questGoal:4,
@@ -174,8 +177,9 @@ const NPCS: NPC[] = [
     ],
   },
   {
-    id:"megumi", x:850, y:620, name:"Мегуми Фусигуро", role:"Студент первого курса",
-    color:"#6366f1", hairColor:"#1a1a1a", bodyColor:"#111827",
+    // Мегуми — правая сторона от проклятого места
+    id:"megumi", x:960, y:860, name:"Мегуми Фусигуро", role:"Студент первого курса",
+    color:"#6b7280", hairColor:"#1a1a1a", bodyColor:"#111827",
     interactRadius:50,
     questName:"Десять теней", questGoal:5,
     questDesc:"Убей пятерых духов в Проклятом месте. Тени не прощают суеты.",
@@ -185,8 +189,9 @@ const NPCS: NPC[] = [
     ],
   },
   {
-    id:"todo", x:1100, y:590, name:"Аой Тодо", role:"Студент третьего курса",
-    color:"#10b981", hairColor:"#4a4a4a", bodyColor:"#14532d",
+    // Тодо — правее, у дороги
+    id:"todo", x:1100, y:520, name:"Аой Тодо", role:"Студент третьего курса",
+    color:"#7dd3fc", hairColor:"#4a4a4a", bodyColor:"#14532d",
     interactRadius:55,
     questName:"Бугги-Вугги", questGoal:3,
     questDesc:"Победи 3 особых духа в Проклятом месте. Это будет красиво.",
@@ -375,18 +380,20 @@ const drawBuilding = (ctx: CanvasRenderingContext2D, b: Building, camX: number, 
   ctx.fillStyle=b.roof; ctx.fill();
   ctx.strokeStyle="rgba(0,0,0,0.18)"; ctx.stroke();
 
-  // Окна
-  const rows=Math.max(1,Math.floor(wH/36)), cols=Math.max(1,Math.floor((br.sx-bl.sx)/32));
-  for (let row=0;row<rows;row++) {
-    for (let col=0;col<cols;col++) {
-      const wx2=bl.sx+(br.sx-bl.sx)*(col+0.5)/cols-5;
-      const wy2=bl.sy-wH*(0.8-row*0.3);
-      // Ночная подсветка окон
-      const litUp=(row*cols+col+b.x)%3!==0;
-      ctx.fillStyle=litUp?"rgba(255,220,120,0.7)":"rgba(40,60,100,0.4)";
-      ctx.fillRect(Math.round(wx2), Math.round(wy2), 10, 13);
-      ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.lineWidth=0.5;
-      ctx.strokeRect(Math.round(wx2), Math.round(wy2), 10, 13);
+  // Окна — только для обычных зданий
+  if (b.type !== "cursed") {
+    const rows=Math.max(1,Math.floor(wH/36)), cols=Math.max(1,Math.floor((br.sx-bl.sx)/32));
+    for (let row=0;row<rows;row++) {
+      for (let col=0;col<cols;col++) {
+        const wx2=bl.sx+(br.sx-bl.sx)*(col+0.5)/cols-5;
+        const wy2=bl.sy-wH*(0.85-row*0.28);
+        if (wy2 > bl.sy || wy2 < bl.sy - wH) continue;
+        const litUp=(row*cols+col+b.x)%3!==0;
+        ctx.fillStyle=litUp?"rgba(255,220,120,0.65)":"rgba(40,60,100,0.4)";
+        ctx.fillRect(Math.round(wx2), Math.round(wy2), 10, 13);
+        ctx.strokeStyle="rgba(0,0,0,0.25)"; ctx.lineWidth=0.5;
+        ctx.strokeRect(Math.round(wx2), Math.round(wy2), 10, 13);
+      }
     }
   }
 
@@ -582,6 +589,9 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
   const animRef = useRef<number>(0);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const dialogRef = useRef<DialogState | null>(null);
+  // Храним progress в ref — чтобы callback внутри useEffect всегда видел актуальный
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
   const bindings = loadBindings();
 
   const SPEED = energyDef.statMods.speed * 2.5;
@@ -605,7 +615,7 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
       }
       // Принятие квеста
       const newProg: CharacterProgress = {
-        ...progress,
+        ...progressRef.current,
         activeQuest: prev.npc.questName,
         questProgress: 0,
         questGoal: prev.npc.questGoal,
@@ -629,7 +639,7 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
         if (e.code===b.interact||e.code==="KeyF"||e.code===b.technique) {
           if (!dialogRef.current && s.nearNpc) openDialog(s.nearNpc);
           else if (dialogRef.current) advanceDialog();
-          else if (!dialogRef.current && s.nearCursed) onGoToBattle({...progress});
+          else if (!dialogRef.current && s.nearCursed) onGoToBattle({...progressRef.current});
         }
       } else {
         s.keys.delete(e.code);
@@ -657,8 +667,23 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
           s.facing={x:mvx/len,y:mvy/len};
           s.walkCycle+=0.18;
         } else { s.vx*=0.45; s.vy*=0.45; }
-        s.px=Math.max(30,Math.min(WORLD_W-30,s.px+s.vx));
-        s.py=Math.max(30,Math.min(WORLD_H-30,s.py+s.vy));
+
+        // Коллизии с зданиями
+        const pr = 18; // радиус игрока
+        const nx = s.px + s.vx;
+        const ny = s.py + s.vy;
+        let blockX = false, blockY = false;
+        BUILDINGS.forEach(bd => {
+          // AABB коллизия с небольшим отступом
+          const bx1 = bd.x - pr, bx2 = bd.x + bd.w + pr;
+          const by1 = bd.y - pr, by2 = bd.y + bd.h + pr;
+          if (nx > bx1 && nx < bx2 && s.py > bd.y - pr && s.py < bd.y + bd.h + pr) blockX = true;
+          if (s.px > bx1 && s.px < bx2 && ny > by1 && ny < by2) blockY = true;
+        });
+        if (!blockX) s.px = nx;
+        if (!blockY) s.py = ny;
+        s.px=Math.max(30,Math.min(WORLD_W-30,s.px));
+        s.py=Math.max(30,Math.min(WORLD_H-30,s.py));
       }
 
       // Ближайший НПС
@@ -704,10 +729,11 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
         ctx.fillText("[E] Войти в бой",sx,sy-76); ctx.textAlign="left";
       }
 
-      // HUD
-      const eq = progress.equippedTechniques;
+      // HUD — всегда читаем из progressRef для актуальных данных
+      const curProg = progressRef.current;
+      const eq = curProg.equippedTechniques;
       const activeTechName = eq && eq.length > 0
-        ? (eq[Math.min(progress.activeSlot ?? 0, eq.length-1)] ?? "Проклятый удар")
+        ? (eq[Math.min(curProg.activeSlot ?? 0, eq.length-1)] ?? "Проклятый удар")
         : "Проклятый удар";
       ctx.fillStyle="rgba(10,8,24,0.88)";
       ctx.fillRect(12,12,210,52);
@@ -715,7 +741,7 @@ const CityScreen = ({ energy, progress, onGoToBattle, onQuestUpdate }: Props) =>
       ctx.fillStyle=energyDef.color; ctx.font="bold 12px monospace";
       ctx.fillText(`${energyDef.kanji}  ${energyDef.nameRu}`,20,30);
       ctx.fillStyle="#c4b5fd"; ctx.font="10px monospace";
-      ctx.fillText(`Ур.${progress.level}  XP: ${progress.xp}/${progress.xpToNext}`,20,46);
+      ctx.fillText(`Ур.${curProg.level}  XP: ${curProg.xp}/${curProg.xpToNext}`,20,46);
       ctx.fillStyle="#6d28d9"; ctx.font="9px monospace";
       ctx.fillText(`[E]: ${activeTechName.slice(0,20)}`,20,58);
 

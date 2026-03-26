@@ -62,9 +62,10 @@ const EnergySelect = ({ onSelect }: Props) => {
         Это определит твою склонность к техникам
       </p>
 
-      <div style={{ display: "flex", gap: 20, width: "min(940px,96vw)", alignItems: "flex-start" }}>
-        {/* Сетка карточек */}
-        <div style={{ flex: "1 1 auto" }}>
+      {/* Внешний контейнер — позиционирование сайдбара абсолютное, чтобы карточки не прыгали */}
+      <div style={{ position: "relative", width: "min(940px,96vw)" }}>
+        {/* Сетка карточек — занимает всю ширину минус место под сайдбар */}
+        <div style={{ marginRight: 240 }}>
           {/* Сетка — фиксированная высота строк (карточки НЕ меняют размер при hover) */}
           <div style={{
             display: "grid",
@@ -172,15 +173,17 @@ const EnergySelect = ({ onSelect }: Props) => {
           </div>
         </div>
 
-        {/* Сайдбар — фиксированный, НЕ влияет на карточки */}
+        {/* Сайдбар — абсолютно позиционированный, НЕ влияет на layout карточек */}
         <div style={{
-          width: 220, flexShrink: 0,
+          position: "absolute", top: 0, right: 0,
+          width: 228,
           background: "rgba(10,8,24,0.92)",
           border: `1px solid ${sidebarEnergy ? sidebarEnergy.color + "55" : "rgba(109,40,217,0.2)"}`,
           borderRadius: 10, padding: 16,
-          minHeight: 320,
+          minHeight: 310,
           transition: "border-color 0.2s, box-shadow 0.2s",
           boxShadow: sidebarEnergy ? `0 0 28px ${sidebarEnergy.glowColor}18` : "none",
+          overflowY: "auto", maxHeight: "60vh",
         }}>
           {sidebarEnergy ? (
             <>

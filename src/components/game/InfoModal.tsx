@@ -26,21 +26,6 @@ const BIND_FIELDS: { key: keyof KeyBindings; label: string }[] = [
   { key: "flee",      label: "Побег из боя" },
 ];
 
-const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-  <div style={{ marginBottom: 18 }}>
-    <div style={{ color: "#7c3aed", fontSize: 10, letterSpacing: "0.18em", marginBottom: 8, fontFamily: "monospace" }}>
-      {title.toUpperCase()}
-    </div>
-    {children}
-  </div>
-);
-
-const Row = ({ label, value }: { label: string; value: string }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 12 }}>
-    <span style={{ color: "#c4b5fd", fontSize: 12, fontFamily: "monospace", flexShrink: 0 }}>{label}</span>
-    <span style={{ color: "#8b7aa8", fontSize: 12, textAlign: "right" }}>{value}</span>
-  </div>
-);
 
 const InfoModal = ({ onClose }: Props) => {
   const [tab, setTab] = useState<Tab>("controls");
@@ -123,29 +108,6 @@ const InfoModal = ({ onClose }: Props) => {
           {/* ── УПРАВЛЕНИЕ ── */}
           {tab === "controls" && (
             <div>
-              <Section title="Движение">
-                <Row label="W / A / S / D" value="Перемещение" />
-                <Row label="Стрелки" value="Тоже работают" />
-              </Section>
-              <Section title="Боевая система">
-                <Row label="Z (настраивается)" value="Удар" />
-                <Row label="E (настраивается)" value="Активная техника" />
-                <Row label="Q (настраивается)" value="Следующая техника в слоте" />
-                <Row label="Удержи Z" value="Накопи заряд → мощный удар" />
-              </Section>
-              <Section title="Город">
-                <Row label="F (настраивается)" value="Говорить с НПС" />
-                <Row label="F у проклятого места" value="Начать бой" />
-              </Section>
-              <Section title="В бою">
-                <Row label="Esc (настраивается)" value="Покинуть бой (бежать)" />
-              </Section>
-              <Section title="Прокачка">
-                <Row label="XP за духов" value="+30 / +80 за особых" />
-                <Row label="Уровень" value="HP, CE и скорость изучения техник растут" />
-                <Row label={`Слоты техник (${MAX_SLOTS})`} value="Простая = 1 слот, Сложная = 3 слота" />
-              </Section>
-
               {/* Кастомные биндинги */}
               <div style={{
                 marginTop: 4, padding: "16px 18px",
